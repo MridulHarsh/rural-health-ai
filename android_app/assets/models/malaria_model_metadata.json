@@ -1,0 +1,11 @@
+{
+  "model": "Malaria Cell Detection",
+  "accuracy": 0.9265,
+  "n_classes": 2,
+  "total_images": 10000,
+  "input_size": 128,
+  "tflite_mb": 2.5,
+  "epochs": 10,
+  "batch_size": 16,
+  "device": "Metal GPU"
+}

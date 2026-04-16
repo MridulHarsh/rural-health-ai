@@ -1,0 +1,10 @@
+{
+  "model": "Diabetes",
+  "source": "diabetes_prediction_dataset.csv",
+  "accuracy": 0.9648,
+  "n_samples": 100000,
+  "n_features": 6,
+  "n_classes": 2,
+  "tflite_kb": 17.7,
+  "agreement": 0.9593
+}

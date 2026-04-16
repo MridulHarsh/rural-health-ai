@@ -1,0 +1,59 @@
+name: rural_health_ai
+description: Offline Multimodal AI Assistant for Rural Health Workers
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # ML / TFLite
+  tflite_flutter: ^0.12.0
+  image: ^4.1.7            # Image decoding/resizing for ML inference
+
+  # Voice Input (offline STT via Android native)
+  speech_to_text: ^7.0.0
+
+  # Camera / Image
+  image_picker: ^1.0.7
+  camera: ^0.10.5+9
+
+  # UI Components
+  cupertino_icons: ^1.0.6
+  google_fonts: ^6.1.0
+  flutter_animate: ^4.5.0
+  shimmer: ^3.0.0
+  fl_chart: ^0.66.0
+  percent_indicator: ^4.2.3
+
+  # Storage
+  shared_preferences: ^2.2.2
+  path_provider: ^2.1.2
+  sqflite: ^2.3.2
+  path: ^1.9.0
+
+  # PDF Export
+  pdf: ^3.10.8
+  printing: ^5.12.0
+
+  # Utilities
+  intl: ^0.20.2
+  permission_handler: ^11.3.0
+  uuid: ^4.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/models/
+

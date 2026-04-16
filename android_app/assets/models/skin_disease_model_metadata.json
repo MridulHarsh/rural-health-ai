@@ -1,0 +1,11 @@
+{
+  "model": "Skin Disease",
+  "accuracy": 0.3567,
+  "n_classes": 10,
+  "total_images": 10987,
+  "input_size": 128,
+  "tflite_mb": 2.5,
+  "epochs": 15,
+  "batch_size": 16,
+  "device": "Metal GPU"
+}

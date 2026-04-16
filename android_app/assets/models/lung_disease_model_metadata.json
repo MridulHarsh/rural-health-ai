@@ -1,0 +1,11 @@
+{
+  "model": "Lung Disease (Chest X-Ray)",
+  "accuracy": 0.8665,
+  "n_classes": 6,
+  "total_images": 7979,
+  "input_size": 128,
+  "tflite_mb": 2.6,
+  "epochs": 15,
+  "batch_size": 16,
+  "device": "Metal GPU"
+}

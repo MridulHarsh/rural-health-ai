@@ -1,0 +1,10 @@
+{
+  "model": "Chronic Kidney Disease",
+  "source": "kidney_disease.csv",
+  "accuracy": 0.9875,
+  "n_samples": 400,
+  "n_features": 11,
+  "n_classes": 3,
+  "tflite_kb": 17.8,
+  "agreement": 0.9675
+}

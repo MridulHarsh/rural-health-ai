@@ -1,0 +1,10 @@
+{
+  "model": "Stroke Risk",
+  "source": "healthcare-dataset-stroke-data.csv",
+  "accuracy": 0.952054794520548,
+  "n_samples": 5110,
+  "n_features": 5,
+  "n_classes": 2,
+  "tflite_kb": 17.2,
+  "agreement": 0.9609
+}

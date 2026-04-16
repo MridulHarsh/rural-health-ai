@@ -1,0 +1,78 @@
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── Editor / IDE ──
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# ── Claude Code local session config (per-machine) ──
+.claude/
+CLAUDE.md.local
+
+# ── Backups from prior iterative edits ──
+*.bak
+*.bak2
+*.imgfix_bak
+*.v2_bak
+*.symptom_patch_bak
+*.fuzzy_bak
+*.imgclass_bak
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.pytest_cache/
+.ipynb_checkpoints/
+.env
+
+# ── Flutter / Dart (root-level guards; android_app/.gitignore
+#    already handles in-tree Flutter build artifacts) ──
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/.pub-cache/
+**/.pub/
+**/doc/api/
+**/ios/Flutter/.last_build_id
+**/ios/Pods/
+**/android/.gradle/
+**/android/captures/
+**/android/local.properties
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+**/android/**/GeneratedPluginRegistrant.java
+
+# ── Model training: large artifacts that can be regenerated ──
+# Deployment-ready TFLite/.json assets under android_app/assets/models/ ARE tracked.
+# The raw training artifacts (joblib pickles, checkpoints, datasets) are NOT.
+model_training/output_v2/
+model_training/output/
+model_training/data/
+model_training/**/*.joblib
+model_training/**/*.pkl
+model_training/**/*.h5
+model_training/**/*.ckpt
+model_training/**/checkpoints/
+model_training/**/logs/
+model_training/**/wandb/
+
+# Kaggle dataset mirrors (should live outside the repo anyway)
+kaggle_datasets*/
+datasets_raw/
+
+# ── Generated coverage / logs ──
+coverage/
+*.lcov
+*.log

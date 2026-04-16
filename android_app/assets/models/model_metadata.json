@@ -1,0 +1,11 @@
+{
+  "model_type": "RandomForest",
+  "num_symptoms": 638,
+  "num_diseases": 83,
+  "accuracy": 0.6082,
+  "training_samples": 934035,
+  "datasets": 42,
+  "total_records": 1167657,
+  "tflite_size_mb": 0.18,
+  "mlp_rf_agreement": 0.8704
+}

@@ -1,0 +1,11 @@
+{
+  "model": "Eye Disease",
+  "accuracy": 0.8483,
+  "n_classes": 4,
+  "total_images": 4217,
+  "input_size": 128,
+  "tflite_mb": 2.6,
+  "epochs": 15,
+  "batch_size": 32,
+  "device": "Metal GPU"
+}

@@ -1,0 +1,10 @@
+{
+  "model": "General Disease",
+  "source": "dhivyeshrk (773 diseases, 246K rows)",
+  "rf_accuracy": 0.8029,
+  "agreement": 0.5552,
+  "n_classes": 754,
+  "n_features": 328,
+  "n_samples": 246926,
+  "tflite_kb": 409.5
+}

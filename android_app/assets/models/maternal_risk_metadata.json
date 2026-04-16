@@ -1,0 +1,10 @@
+{
+  "model": "Maternal Health Risk",
+  "source": "Maternal Health Risk Data Set.csv",
+  "accuracy": 0.8719211822660099,
+  "n_samples": 1014,
+  "n_features": 6,
+  "n_classes": 3,
+  "tflite_kb": 17.9,
+  "agreement": 0.5878
+}

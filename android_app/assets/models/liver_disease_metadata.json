@@ -1,0 +1,10 @@
+{
+  "model": "Liver Disease",
+  "source": "Liver Patient Dataset (LPD)_train.csv",
+  "accuracy": 0.9980452842482489,
+  "n_samples": 30691,
+  "n_features": 9,
+  "n_classes": 2,
+  "tflite_kb": 17.4,
+  "agreement": 0.7143
+}

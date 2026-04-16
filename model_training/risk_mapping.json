@@ -1,0 +1,50 @@
+{
+  "emergency": [
+    "Heart Disease", "Heart Attack", "Myocardial Infarction",
+    "Brain Stroke", "Stroke", "Paralysis (brain hemorrhage)",
+    "Pneumonia", "Tuberculosis", "Malaria", "Dengue", "Typhoid",
+    "Cholera", "Meningitis", "Sepsis", "Anaphylaxis", "Eclampsia",
+    "Acute Kidney Failure", "Cardiac Arrest", "Pulmonary Embolism",
+    "Hepatitis A", "Hepatitis B", "Hepatitis C", "Hepatitis D", "Hepatitis E",
+    "Jaundice", "Severe Dehydration", "Heart Failure"
+  ],
+  "urgent": [
+    "Diabetes", "No Diabetes",
+    "Hypertension", "High Blood Pressure",
+    "Chronic Kidney Disease", "No Kidney Disease",
+    "Liver Disease", "No Liver Disease", "Cirrhosis",
+    "Thyroid Disease", "Hypothyroidism", "Hyperthyroidism",
+    "Alzheimer's Disease", "Parkinson's Disease", "Multiple Sclerosis",
+    "Asthma", "Lung Disease", "Bronchial Asthma", "Bronchitis",
+    "Healthy Heart", "No Heart Disease",
+    "Autism Spectrum Disorder", "No ASD",
+    "ADHD", "OCD", "Sleep Disorder", "Depression", "Anxiety Disorder",
+    "Bipolar Disorder", "Mental Health Condition", "Mental Health Issue",
+    "Psychosocial Stress", "Student Mental Health Issue",
+    "Dry Eye Disease",
+    "Urinary Tract Infection", "Cervical Spondylosis",
+    "Peptic Ulcer Disease", "GERD", "Drug Reaction",
+    "Chronic Cholestasis", "AIDS", "Arthritis", "Osteoarthritis",
+    "Lower Back Pain", "Chronic Disease",
+    "Anemia", "Hypoglycemia",
+    "Gastroenteritis", "Psoriasis", "Impetigo",
+    "Migraine", "Vertigo",
+    "No Stroke", "No Diabetes", "No Kidney Disease", "No Liver Disease",
+    "No Thyroid Disease", "No ASD"
+  ],
+  "normal": [
+    "Common Cold", "Acne", "Chicken Pox", "Varicose Veins",
+    "Fungal Infection", "Allergy", "Allergic Reaction",
+    "Hemorrhoids", "Seasonal Allergies", "Mild Headache",
+    "Muscle Strain", "Minor Cuts", "Insect Bites",
+    "Mild Gastritis", "Constipation", "Mild Diarrhea",
+    "Dandruff", "Dry Skin", "Mild Fever",
+    "Skin Infection", "Dehydration"
+  ],
+  "default_risk": "urgent",
+  "risk_descriptions": {
+    "emergency": "Immediate medical attention required. Refer to nearest hospital NOW.",
+    "urgent": "Medical consultation needed within 24 hours. Monitor closely.",
+    "normal": "Basic care and home monitoring. Follow up if symptoms worsen."
+  }
+}

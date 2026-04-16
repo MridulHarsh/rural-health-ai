@@ -1,0 +1,10 @@
+{
+  "model": "Heart Disease",
+  "source": "heart.csv",
+  "accuracy": 1.0,
+  "n_samples": 1025,
+  "n_features": 13,
+  "n_classes": 2,
+  "tflite_kb": 17.9,
+  "agreement": 0.8361
+}
