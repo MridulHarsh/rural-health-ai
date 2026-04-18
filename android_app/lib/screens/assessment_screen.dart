@@ -73,9 +73,13 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   // ── Symptom chips — organized by body system for better UX ──
     static const Map<String, List<String>> _symptomsByCategory = {
     'General': [
-      'fatigue', 'body_ache', 'unexplained_weight_loss',
+      // Fever is cardinal in 15+ diseases and is often reported by the
+      // patient without a thermometer reading — surface it first.
+      'fever', 'high_fever', 'mild_fever',
+      'fatigue', 'body_ache', 'unexplained_weight_loss', 'weight_loss',
       'chills', 'night_sweats', 'loss_of_appetite', 'malaise',
-      'dehydration', 'swollen_lymph_nodes', 'pallor', 'weakness_general',
+      'dehydration', 'dry_mouth', 'sunken_eyes',
+      'swollen_lymph_nodes', 'pallor', 'weakness_general',
       'sweating', 'cold', 'daytime_sleepiness',
     ],
     'Respiratory': [

@@ -496,11 +496,8 @@ const Map<String, Map<BodySystem, double>> symptomSystemMap = {
   'high_blood_pressure': {BodySystem.cardiac: 0.5, BodySystem.maternal: 0.4},
 
   // GENERAL / MULTI-SYSTEM
-  'weight_loss': {
-    BodySystem.infectious: 0.3,
-    BodySystem.endocrine: 0.3,
-    BodySystem.gastrointestinal: 0.3,
-  },
+  // "weight_loss" is aliased to "unexplained_weight_loss" (which carries
+  // the canonical mappings) — no standalone entry needed here.
   'swelling_legs': {
     BodySystem.cardiac: 0.5,
     BodySystem.urogenital: 0.3,
@@ -1150,7 +1147,7 @@ final List<DiseaseProfile> diseaseProfiles = [
       'bloating': SymptomRole.common,
       'loss_of_appetite': SymptomRole.common,
       'vomiting': SymptomRole.occasional,
-      'weight_loss': SymptomRole.occasional,
+      'unexplained_weight_loss': SymptomRole.occasional,
       'bloody_stool': SymptomRole.occasional, // danger sign
     },
     prevalence: 0.5,
@@ -5361,8 +5358,8 @@ const Map<String, String> symptomAliases = {
   'స్పృహ తప్పింది': 'unconsciousness',
 
   // ── 100-disease expansion: chip-to-canonical aliases ──
-  // (swollen_lymph_nodes and abdominal_cramping are already aliased above;
-  // only genuinely new ones for the 103 added DiseaseProfiles below.)
+  // (swollen_lymph_nodes, abdominal_cramping, weight_loss are already
+  // aliased above; only genuinely new ones for the 103 added DiseaseProfiles.)
   'hesitancy': 'urinary_hesitancy',
   'urgency': 'urinary_urgency',
   'acne': 'acne_pimples',
