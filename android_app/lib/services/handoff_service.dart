@@ -8,13 +8,9 @@ import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class HandoffService {
-  /// Share a patient summary to a PHC doctor via WhatsApp. If [phone] is
-  /// provided (country-code prefixed, digits only), the chat opens directly
-  /// with that contact; otherwise WhatsApp opens to the contact picker.
-  ///
-  /// If a PDF [filePath] is provided, the URL falls back to the native
-  /// Share Sheet so the user can attach the PDF — WhatsApp's wa.me
-  /// deep-link doesn't support arbitrary file attachment.
+  /// Share a patient summary to a PHC doctor via WhatsApp. Tries the WhatsApp
+  /// app scheme first (opens the app directly), then falls back to wa.me URL
+  /// which works even without the app installed (opens in browser).
   static Future<bool> sendToWhatsApp({
     required String message,
     String? phone,
@@ -22,10 +18,18 @@ class HandoffService {
   }) async {
     final encoded = Uri.encodeComponent(message);
     final num = phone?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+
+    // 1. Try native WhatsApp scheme (opens app directly on Android/iOS).
+    final nativeUrl = num.isEmpty
+        ? 'whatsapp://send?text=$encoded'
+        : 'whatsapp://send?phone=$num&text=$encoded';
+    if (await _tryLaunch(nativeUrl, checkCanLaunch: false)) return true;
+
+    // 2. Fall back to wa.me universal link (browser or app via App Links).
     final waUrl = num.isEmpty
         ? 'https://wa.me/?text=$encoded'
         : 'https://wa.me/$num?text=$encoded';
-    return _tryLaunch(waUrl);
+    return _tryLaunch(waUrl, checkCanLaunch: false);
   }
 
   /// Open the SMS composer pre-filled with the message and optional recipient.
@@ -44,15 +48,22 @@ class HandoffService {
     return _tryLaunch('tel:$phone');
   }
 
-  static Future<bool> _tryLaunch(String url) async {
+  /// Attempt to launch [url] with [LaunchMode.externalApplication]. By
+  /// default we skip the [canLaunchUrl] precheck — on Android 11+ it
+  /// returns false for any package not declared in the manifest's
+  /// <queries> block even when the app is installed, and the actual
+  /// launch often succeeds anyway. We only mark a launch failed when
+  /// [launchUrl] itself throws or returns false.
+  static Future<bool> _tryLaunch(String url, {bool checkCanLaunch = false}) async {
     try {
       final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        return launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (checkCanLaunch) {
+        final can = await canLaunchUrl(uri);
+        if (!can) return false;
       }
-      return false;
+      return await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (e) {
-      debugPrint('[HandoffService] launch error: $e');
+      debugPrint('[HandoffService] launch error for $url: $e');
       return false;
     }
   }
