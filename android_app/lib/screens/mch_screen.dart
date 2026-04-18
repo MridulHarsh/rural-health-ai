@@ -24,6 +24,13 @@ class _MchScreenState extends State<MchScreen>
   List<MchRecord> _records = [];
   bool _loading = true;
 
+  /// IDs of records the user has CHECKED but not yet committed. Tapping a
+  /// pending record's checkbox toggles membership here; it only becomes
+  /// "marked done" in the database after the user taps the commit bar.
+  /// This matches the ASHA field workflow — a single visit often covers
+  /// several procedures at once, so we record them in one batch.
+  final Set<int> _staged = {};
+
   @override
   void initState() {
     super.initState();
@@ -43,13 +50,21 @@ class _MchScreenState extends State<MchScreen>
     setState(() {
       _records = r;
       _loading = false;
+      // Clear any staged IDs that no longer exist (e.g. deleted records)
+      final validIds = r.map((x) => x.id).whereType<int>().toSet();
+      _staged.removeWhere((id) => !validIds.contains(id));
     });
   }
 
-  Future<void> _toggle(MchRecord r) async {
+  /// Checkbox tap behaviour:
+  ///  - Completed record  → immediate single-item un-mark (undo)
+  ///  - Pending record    → toggle membership in the staged set. No DB
+  ///    write happens until the user taps "Mark N as done" in the bar.
+  Future<void> _onCheckboxTap(MchRecord r) async {
     if (r.id == null) return;
     if (r.completed) {
-      // Un-complete: delete and recreate as pending (service has no "un-mark")
+      // Un-mark is a single-step action — rare enough that batching would
+      // add friction. Re-insert a fresh pending clone.
       await MchService.delete(r.id!);
       await MchService.insertBatch([
         MchRecord(
@@ -58,16 +73,41 @@ class _MchScreenState extends State<MchScreen>
           kind: r.kind,
           label: r.label,
           dueDate: r.dueDate,
-        )
+        ),
       ]);
-    } else {
-      await MchService.markComplete(r.id!);
+      await _load();
+      return;
     }
+    setState(() {
+      if (_staged.contains(r.id)) {
+        _staged.remove(r.id);
+      } else {
+        _staged.add(r.id!);
+      }
+    });
+  }
+
+  /// Commit all staged selections as "done" in one batch.
+  Future<void> _commitStaged() async {
+    if (_staged.isEmpty) return;
+    for (final id in _staged) {
+      await MchService.markComplete(id);
+    }
+    _staged.clear();
     await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Procedures marked as done')),
+    );
+  }
+
+  void _clearStaged() {
+    setState(_staged.clear);
   }
 
   Future<void> _delete(MchRecord r) async {
     if (r.id == null) return;
+    _staged.remove(r.id);
     await MchService.delete(r.id!);
     await _load();
   }
@@ -136,6 +176,7 @@ class _MchScreenState extends State<MchScreen>
 
   @override
   Widget build(BuildContext context) {
+    final hasStaged = _staged.isNotEmpty;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Maternal & Child Health'),
@@ -148,11 +189,16 @@ class _MchScreenState extends State<MchScreen>
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddMenu,
-        icon: const Icon(Icons.add),
-        label: const Text('Schedule'),
-      ),
+      // When no staging is in progress, show the Schedule FAB. When items are
+      // staged, hide the FAB to avoid visual competition with the commit bar.
+      floatingActionButton: hasStaged
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _showAddMenu,
+              icon: const Icon(Icons.add),
+              label: const Text('Schedule'),
+            ),
+      bottomNavigationBar: hasStaged ? _buildCommitBar() : null,
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : TabBarView(
@@ -163,6 +209,57 @@ class _MchScreenState extends State<MchScreen>
                 _buildDoneTab(),
               ],
             ),
+    );
+  }
+
+  /// Sticky bottom bar that appears while the user has checkboxes selected
+  /// but not committed. Lets them mark everything as done in one tap.
+  Widget _buildCommitBar() {
+    final n = _staged.length;
+    return Material(
+      elevation: 8,
+      color: Theme.of(context).colorScheme.primary,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Row(
+            children: [
+              Icon(Icons.check_circle_rounded,
+                  color: Colors.white.withValues(alpha: 0.9)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  n == 1
+                      ? '1 procedure selected'
+                      : '$n procedures selected',
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15),
+                ),
+              ),
+              TextButton(
+                onPressed: _clearStaged,
+                style: TextButton.styleFrom(foregroundColor: Colors.white70),
+                child: const Text('Clear'),
+              ),
+              const SizedBox(width: 4),
+              ElevatedButton.icon(
+                onPressed: _commitStaged,
+                icon: const Icon(Icons.check_rounded, size: 18),
+                label: Text(n == 1 ? 'Mark as done' : 'Mark all as done'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: Theme.of(context).colorScheme.primary,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -183,13 +280,15 @@ class _MchScreenState extends State<MchScreen>
       child: ListView(
         padding: const EdgeInsets.all(12),
         children: [
+          _buildStagingHint(),
           if (overdue.isNotEmpty)
             _UrgencySection(
               title: 'Overdue',
               color: Colors.red,
               icon: Icons.warning_rounded,
               records: overdue,
-              onToggle: _toggle,
+              staged: _staged,
+              onTap: _onCheckboxTap,
               onDelete: _delete,
             ),
           if (dueSoon.isNotEmpty)
@@ -198,7 +297,8 @@ class _MchScreenState extends State<MchScreen>
               color: Colors.orange,
               icon: Icons.schedule_rounded,
               records: dueSoon,
-              onToggle: _toggle,
+              staged: _staged,
+              onTap: _onCheckboxTap,
               onDelete: _delete,
             ),
           if (later.isNotEmpty)
@@ -207,11 +307,37 @@ class _MchScreenState extends State<MchScreen>
               color: Colors.blue,
               icon: Icons.event_note_rounded,
               records: later,
-              onToggle: _toggle,
+              staged: _staged,
+              onTap: _onCheckboxTap,
               onDelete: _delete,
             ),
         ],
       ),
+    );
+  }
+
+  /// A one-line hint that only shows when nothing is staged yet, so the user
+  /// discovers the batch-select behaviour on first visit.
+  Widget _buildStagingHint() {
+    if (_staged.isNotEmpty) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(children: [
+        Icon(Icons.touch_app_rounded,
+            color: Colors.blue.shade700, size: 18),
+        const SizedBox(width: 8),
+        const Expanded(
+          child: Text(
+            'Tick all completed procedures, then confirm at the bottom.',
+            style: TextStyle(fontSize: 12.5),
+          ),
+        ),
+      ]),
     );
   }
 
@@ -233,9 +359,10 @@ class _MchScreenState extends State<MchScreen>
       onRefresh: _load,
       child: ListView.builder(
         padding: const EdgeInsets.all(12),
-        itemCount: keys.length,
+        itemCount: keys.length + 1,
         itemBuilder: (ctx, i) {
-          final key = keys[i];
+          if (i == 0) return _buildStagingHint();
+          final key = keys[i - 1];
           final items = groups[key]!
             ..sort((a, b) => a.dueDate.compareTo(b.dueDate));
           final parts = key.split('||');
@@ -245,7 +372,8 @@ class _MchScreenState extends State<MchScreen>
             patientName: patient,
             kind: kind,
             records: items,
-            onToggle: _toggle,
+            staged: _staged,
+            onTap: _onCheckboxTap,
             onDelete: _delete,
           );
         },
@@ -266,7 +394,8 @@ class _MchScreenState extends State<MchScreen>
         itemCount: done.length,
         itemBuilder: (_, i) => _MchTile(
           record: done[i],
-          onToggle: _toggle,
+          staged: _staged,
+          onTap: _onCheckboxTap,
           onDelete: _delete,
         ),
       ),
@@ -305,7 +434,8 @@ class _UrgencySection extends StatelessWidget {
   final MaterialColor color;
   final IconData icon;
   final List<MchRecord> records;
-  final Future<void> Function(MchRecord) onToggle;
+  final Set<int> staged;
+  final Future<void> Function(MchRecord) onTap;
   final Future<void> Function(MchRecord) onDelete;
 
   const _UrgencySection({
@@ -313,7 +443,8 @@ class _UrgencySection extends StatelessWidget {
     required this.color,
     required this.icon,
     required this.records,
-    required this.onToggle,
+    required this.staged,
+    required this.onTap,
     required this.onDelete,
   });
 
@@ -346,7 +477,8 @@ class _UrgencySection extends StatelessWidget {
         ...records.map((r) => _MchTile(
               record: r,
               accent: color,
-              onToggle: onToggle,
+              staged: staged,
+              onTap: onTap,
               onDelete: onDelete,
             )),
         const SizedBox(height: 16),
@@ -360,14 +492,16 @@ class _PatientGroupCard extends StatefulWidget {
   final String patientName;
   final MchKind kind;
   final List<MchRecord> records;
-  final Future<void> Function(MchRecord) onToggle;
+  final Set<int> staged;
+  final Future<void> Function(MchRecord) onTap;
   final Future<void> Function(MchRecord) onDelete;
 
   const _PatientGroupCard({
     required this.patientName,
     required this.kind,
     required this.records,
-    required this.onToggle,
+    required this.staged,
+    required this.onTap,
     required this.onDelete,
   });
 
@@ -448,7 +582,8 @@ class _PatientGroupCardState extends State<_PatientGroupCard> {
             ...widget.records.map((r) => _MchTile(
                   record: r,
                   compact: true,
-                  onToggle: widget.onToggle,
+                  staged: widget.staged,
+                  onTap: widget.onTap,
                   onDelete: widget.onDelete,
                 )),
             const SizedBox(height: 4),
@@ -460,16 +595,23 @@ class _PatientGroupCardState extends State<_PatientGroupCard> {
 }
 
 /// Single row with a checkbox, swipe-to-delete, and date/patient info.
+///
+/// Three visual states:
+///  - completed (stored DB flag):  strike-through text, grey, checkbox filled
+///  - staged (in [staged] set):    highlighted background, checkbox filled
+///  - pending (neither):           default, checkbox empty
 class _MchTile extends StatelessWidget {
   final MchRecord record;
   final MaterialColor? accent;
   final bool compact;
-  final Future<void> Function(MchRecord) onToggle;
+  final Set<int> staged;
+  final Future<void> Function(MchRecord) onTap;
   final Future<void> Function(MchRecord) onDelete;
 
   const _MchTile({
     required this.record,
-    required this.onToggle,
+    required this.staged,
+    required this.onTap,
     required this.onDelete,
     this.accent,
     this.compact = false,
@@ -478,16 +620,25 @@ class _MchTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final r = record;
+    final isStaged = r.id != null && staged.contains(r.id);
     final dateStr = '${r.dueDate.day}/${r.dueDate.month}/${r.dueDate.year}';
     final completedStr = r.completedOn != null
         ? ' — done ${r.completedOn!.day}/${r.completedOn!.month}'
         : '';
+    final primary = Theme.of(context).colorScheme.primary;
+
     final tile = CheckboxListTile(
       contentPadding: EdgeInsets.symmetric(
           horizontal: compact ? 16 : 12, vertical: compact ? 0 : 2),
       controlAffinity: ListTileControlAffinity.leading,
-      value: r.completed,
-      onChanged: (_) => onToggle(r),
+      // A staged pending row visually reads as "checked" even though the DB
+      // flag is still false — the commit bar makes it permanent.
+      value: r.completed || isStaged,
+      tristate: false,
+      onChanged: (_) => onTap(r),
+      // When staged, tint the checkbox so the user can distinguish
+      // "marked but not yet saved" from "already saved done".
+      activeColor: r.completed ? Colors.green.shade600 : primary,
       title: Text(
         r.label,
         style: TextStyle(
@@ -511,8 +662,8 @@ class _MchTile extends StatelessWidget {
               color: accent?.shade600 ?? Colors.grey.shade500,
             ),
     );
-    // Swipe-left to delete; the checkbox handles mark/unmark directly so we
-    // don't need a swipe-right gesture (avoids accidental completion).
+
+    // Swipe-left to delete. Checkbox handles staging / unmarking inline.
     return Dismissible(
       key: ValueKey('mch_${r.id ?? r.hashCode}'),
       direction: DismissDirection.endToStart,
@@ -542,13 +693,26 @@ class _MchTile extends StatelessWidget {
       },
       onDismissed: (_) => onDelete(r),
       child: compact
-          ? tile
+          ? Container(
+              color: isStaged
+                  ? primary.withValues(alpha: 0.08)
+                  : Colors.transparent,
+              child: tile,
+            )
           : Card(
               margin: const EdgeInsets.only(bottom: 6),
               elevation: 0,
-              color: Colors.white,
+              // Highlight staged rows with a tinted card so the user can
+              // see at a glance what's about to be committed.
+              color: isStaged
+                  ? primary.withValues(alpha: 0.08)
+                  : Colors.white,
               shape: RoundedRectangleBorder(
-                side: BorderSide(color: Colors.grey.shade200),
+                side: BorderSide(
+                  color: isStaged
+                      ? primary.withValues(alpha: 0.4)
+                      : Colors.grey.shade200,
+                ),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: tile,

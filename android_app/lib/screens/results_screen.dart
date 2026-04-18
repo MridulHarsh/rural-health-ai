@@ -968,7 +968,9 @@ class _ResultsScreenState extends State<ResultsScreen> {
           ),
         if (isEmergency) const SizedBox(height: 12),
 
-        // Listen + WhatsApp row (primary row, always visible)
+        // Read-aloud + WhatsApp row (primary row, always visible).
+        // Read-aloud narrates the result in the patient's selected language —
+        // a low-literacy accessibility feature for ASHA workers.
         Row(
           children: [
             Expanded(
@@ -977,10 +979,10 @@ class _ResultsScreenState extends State<ResultsScreen> {
                 icon: Icon(
                   _ttsActive
                       ? Icons.stop_circle_rounded
-                      : Icons.volume_up_rounded,
+                      : Icons.record_voice_over_rounded,
                   size: 20,
                 ),
-                label: Text(_ttsActive ? 'Stop' : 'Listen'),
+                label: Text(_ttsActive ? 'Stop' : 'Read aloud'),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
