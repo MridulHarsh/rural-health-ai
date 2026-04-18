@@ -46,6 +46,15 @@ dependencies:
   permission_handler: ^11.3.0
   uuid: ^4.3.3
 
+  # ── New: competitive-parity features ──
+  flutter_tts: ^4.0.2                          # Voice-narrated results in regional language
+  url_launcher: ^6.3.0                         # WhatsApp / SMS / tel intents for PHC handoff
+  vibration: ^2.0.0                            # Emergency alarm on red-flag trigger
+  encrypt: ^5.0.3                              # AES-256 at-rest encryption for PII
+  flutter_secure_storage: ^9.2.2               # Key storage for encrypt
+  google_mlkit_text_recognition: ^0.13.0       # OCR for prescription photos
+  geolocator: ^12.0.0                          # Optional GPS stamp for outbreak clustering
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

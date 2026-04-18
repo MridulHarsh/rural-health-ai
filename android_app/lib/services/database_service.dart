@@ -1,10 +1,17 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as path;
 
-/// Local SQLite database for patient records
+import 'encryption_service.dart';
+import 'inventory_service.dart';
+import 'mch_service.dart';
+
+/// Local SQLite database for patient records. PII columns (patient_name,
+/// voice_transcript, notes) are encrypted at rest via [EncryptionService].
 class DatabaseService {
   static Database? _db;
+  static const int _schemaVersion = 2; // 1 -> 2: household_id on assessments
 
   static Future<Database> get database async {
     if (_db != null) return _db!;
@@ -18,11 +25,12 @@ class DatabaseService {
 
     return openDatabase(
       dbFile,
-      version: 1,
+      version: _schemaVersion,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE assessments(
             id TEXT PRIMARY KEY,
+            household_id TEXT,
             patient_name TEXT,
             patient_age INTEGER,
             patient_gender TEXT,
@@ -37,18 +45,33 @@ class DatabaseService {
             created_at TEXT
           )
         ''');
+        await InventoryService.ensureSchema(db);
+        await MchService.ensureSchema(db);
+      },
+      onUpgrade: (db, oldV, newV) async {
+        if (oldV < 2) {
+          try {
+            await db.execute(
+                'ALTER TABLE assessments ADD COLUMN household_id TEXT');
+          } catch (_) {/* column may exist */}
+        }
+        await InventoryService.ensureSchema(db);
+        await MchService.ensureSchema(db);
       },
     );
   }
 
-  /// Save an assessment record
+  /// Save an assessment record. PII fields are encrypted transparently.
   static Future<void> saveAssessment(Map<String, dynamic> data) async {
     final db = await database;
     await db.insert(
       'assessments',
       {
-        'id': data['patient']?['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
-        'patient_name': data['patient']?['name'] ?? 'Unknown',
+        'id': data['patient']?['id'] ??
+            DateTime.now().millisecondsSinceEpoch.toString(),
+        'household_id': data['patient']?['householdId'],
+        'patient_name': EncryptionService.encryptString(
+            data['patient']?['name'] ?? 'Unknown'),
         'patient_age': data['patient']?['age'] ?? 0,
         'patient_gender': data['patient']?['gender'] ?? '',
         'symptoms': jsonEncode(data['symptoms'] ?? []),
@@ -57,15 +80,17 @@ class DatabaseService {
         'overall_risk': data['overallRisk'] ?? 'urgent',
         'next_steps': jsonEncode(data['nextSteps'] ?? []),
         'image_path': data['imagePath'],
-        'voice_transcript': data['voiceTranscript'],
-        'notes': data['additionalNotes'],
-        'created_at': data['assessedAt'] ?? DateTime.now().toIso8601String(),
+        'voice_transcript':
+            EncryptionService.encryptString(data['voiceTranscript']),
+        'notes': EncryptionService.encryptString(data['additionalNotes']),
+        'created_at':
+            data['assessedAt'] ?? DateTime.now().toIso8601String(),
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 
-  /// Get all assessment records
+  /// Get all assessment records. PII is decrypted transparently.
   static Future<List<Map<String, dynamic>>> getAssessments() async {
     final db = await database;
     final results = await db.query(
@@ -76,7 +101,9 @@ class DatabaseService {
     return results.map((row) {
       return {
         'id': row['id'],
-        'patientName': row['patient_name'],
+        'householdId': row['household_id'],
+        'patientName':
+            EncryptionService.decryptString(row['patient_name'] as String?),
         'patientAge': row['patient_age'],
         'patientGender': row['patient_gender'],
         'symptoms': _safeDecode(row['symptoms'], fallback: const []),
@@ -85,11 +112,19 @@ class DatabaseService {
         'overallRisk': row['overall_risk'],
         'nextSteps': _safeDecode(row['next_steps'], fallback: const []),
         'imagePath': row['image_path'],
-        'voiceTranscript': row['voice_transcript'],
-        'notes': row['notes'],
+        'voiceTranscript': EncryptionService.decryptString(
+            row['voice_transcript'] as String?),
+        'notes': EncryptionService.decryptString(row['notes'] as String?),
         'createdAt': row['created_at'],
       };
     }).toList();
+  }
+
+  /// Get all assessments for a given household (for family/clustered view).
+  static Future<List<Map<String, dynamic>>> getByHousehold(
+      String householdId) async {
+    final all = await getAssessments();
+    return all.where((r) => r['householdId'] == householdId).toList();
   }
 
   /// Decode a JSON-encoded column safely. A single corrupted record must not
@@ -100,9 +135,7 @@ class DatabaseService {
     try {
       return jsonDecode(raw);
     } catch (e) {
-      // Log and return fallback — don't propagate the crash.
-      // ignore: avoid_print
-      print('[DatabaseService] corrupted JSON column: $e');
+      debugPrint('[DatabaseService] corrupted JSON column: $e');
       return fallback;
     }
   }

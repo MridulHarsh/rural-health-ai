@@ -4483,6 +4483,161 @@ final List<DiseaseProfile> diseaseProfiles = [
     description: 'Harmful drinking pattern with tolerance, withdrawal, and loss of control.',
   ),
 
+  // ── Rural-endemic tropical diseases (high priority in rural India) ──
+  DiseaseProfile(
+    id: 'kala_azar',
+    displayName: 'Kala Azar (Visceral Leishmaniasis)',
+    primarySystem: BodySystem.infectious,
+    secondarySystems: [BodySystem.hematological, BodySystem.gastrointestinal],
+    symptomProfile: {
+      'fever': SymptomRole.cardinal,
+      'unexplained_weight_loss': SymptomRole.cardinal,
+      'abdominal_distension': SymptomRole.cardinal,  // splenomegaly
+      'pallor': SymptomRole.cardinal,                // pancytopenia
+      'fatigue': SymptomRole.common,
+      'night_sweats': SymptomRole.common,
+      'lymph_node_swelling': SymptomRole.common,
+      'skin_discoloration': SymptomRole.occasional,  // "kala" = black, hyperpigmentation
+    },
+    prevalence: 0.15,
+    typicalRisk: ClinicalRisk.urgent,
+    nextSteps: [
+      'Refer for rK39 rapid diagnostic test (RDT)',
+      'Free treatment under NVBDCP — single-dose liposomal amphotericin B',
+      'Endemic in Bihar, Jharkhand, UP, West Bengal — high index of suspicion there',
+      'Bed nets reduce sandfly transmission',
+    ],
+    description: 'Visceral leishmaniasis — sandfly-transmitted; persistent fever with splenomegaly and pancytopenia. India targets elimination by 2026.',
+  ),
+
+  DiseaseProfile(
+    id: 'scrub_typhus',
+    displayName: 'Scrub Typhus',
+    primarySystem: BodySystem.infectious,
+    secondarySystems: [BodySystem.dermatological, BodySystem.respiratory],
+    symptomProfile: {
+      'fever': SymptomRole.cardinal,
+      'headache': SymptomRole.cardinal,
+      'rash': SymptomRole.cardinal,                  // maculopapular
+      'lymph_node_swelling': SymptomRole.cardinal,
+      'body_ache': SymptomRole.common,
+      'nausea': SymptomRole.common,
+      'cough': SymptomRole.occasional,
+      'confusion': SymptomRole.occasional,           // CNS involvement
+    },
+    prevalence: 0.2,
+    typicalRisk: ClinicalRisk.urgent,
+    nextSteps: [
+      'Look for eschar (black scab at chigger bite site — pathognomonic)',
+      'Empirical doxycycline or azithromycin — do NOT wait for serology',
+      'Refer urgently if altered sensorium or breathlessness (MODS)',
+      'Endemic in hill tracts — monsoon-season surge',
+    ],
+    description: 'Orientia tsutsugamushi infection via chigger mites. Look for the eschar. Easily treated early, fatal if missed.',
+  ),
+
+  DiseaseProfile(
+    id: 'leptospirosis',
+    displayName: 'Leptospirosis',
+    primarySystem: BodySystem.infectious,
+    secondarySystems: [BodySystem.gastrointestinal, BodySystem.urogenital],
+    symptomProfile: {
+      'high_fever': SymptomRole.cardinal,
+      'severe_body_pain': SymptomRole.cardinal,      // myalgia, esp. calves
+      'jaundice': SymptomRole.cardinal,              // Weil's disease
+      'headache': SymptomRole.cardinal,
+      'nausea': SymptomRole.common,
+      'vomiting': SymptomRole.common,
+      'eye_redness': SymptomRole.common,             // conjunctival suffusion
+      'decreased_urine': SymptomRole.occasional,     // AKI
+    },
+    prevalence: 0.15,
+    typicalRisk: ClinicalRisk.urgent,
+    nextSteps: [
+      'Ask about water/mud/rat exposure (farming, flooding)',
+      'Start doxycycline or ceftriaxone empirically',
+      'Refer if jaundice, AKI, or haemorrhage (Weil\'s disease)',
+      'Monsoon and post-flood surges expected',
+    ],
+    description: 'Waterborne spirochete from rodent urine. Calf-muscle pain + jaundice + renal failure is classic Weil\'s triad.',
+  ),
+
+  DiseaseProfile(
+    id: 'heat_stroke',
+    displayName: 'Heat Stroke',
+    primarySystem: BodySystem.neurological,
+    secondarySystems: [BodySystem.cardiac, BodySystem.infectious],
+    symptomProfile: {
+      'high_fever': SymptomRole.cardinal,            // core temp >40°C
+      'altered_consciousness': SymptomRole.cardinal,
+      'nausea': SymptomRole.cardinal,
+      'headache': SymptomRole.common,
+      'confusion': SymptomRole.common,
+      'sweating': SymptomRole.occasional,            // may STOP in classic heat stroke
+      'palpitations': SymptomRole.common,
+      'seizures': SymptomRole.occasional,
+    },
+    prevalence: 0.3,
+    typicalRisk: ClinicalRisk.emergency,
+    nextSteps: [
+      'EMERGENCY — move to shade, remove clothing, douse with cool water',
+      'Fan the patient; cold packs to neck, armpits, groin',
+      'IV fluids if available; refer immediately',
+      'Common during April-June heatwaves — screen construction and farm workers',
+    ],
+    description: 'Core body temperature >40°C with CNS dysfunction. A true medical emergency — minutes matter.',
+  ),
+
+  DiseaseProfile(
+    id: 'rabies',
+    displayName: 'Rabies',
+    primarySystem: BodySystem.neurological,
+    secondarySystems: [BodySystem.infectious],
+    symptomProfile: {
+      'altered_consciousness': SymptomRole.cardinal,
+      'seizures': SymptomRole.cardinal,
+      'hypervigilance': SymptomRole.cardinal,        // hydrophobia / aerophobia
+      'difficulty_swallowing': SymptomRole.common,
+      'fever': SymptomRole.common,
+      'confusion': SymptomRole.common,
+      'muscle_cramps': SymptomRole.occasional,       // severe throat/body spasms
+    },
+    prevalence: 0.05,
+    typicalRisk: ClinicalRisk.emergency,
+    nextSteps: [
+      'Clinical rabies is UNIVERSALLY FATAL — focus on post-exposure prophylaxis',
+      'ANY mammalian bite: wash 15 min with soap + water, then PEP',
+      'PEP: Anti-Rabies Vaccine (5-dose or essen schedule) + RIG for Cat-III',
+      'Free under National Rabies Control Programme',
+    ],
+    description: 'Viral encephalitis from mammalian bite. Symptomatic rabies has ~100% mortality. Prevention is everything.',
+  ),
+
+  DiseaseProfile(
+    id: 'japanese_encephalitis',
+    displayName: 'Japanese Encephalitis',
+    primarySystem: BodySystem.neurological,
+    secondarySystems: [BodySystem.infectious],
+    symptomProfile: {
+      'high_fever': SymptomRole.cardinal,
+      'altered_consciousness': SymptomRole.cardinal,
+      'seizures': SymptomRole.cardinal,
+      'headache': SymptomRole.common,
+      'vomiting': SymptomRole.common,
+      'muscle_weakness': SymptomRole.common,          // flaccid paralysis
+      'neck_stiffness': SymptomRole.occasional,
+    },
+    prevalence: 0.1,
+    typicalRisk: ClinicalRisk.emergency,
+    nextSteps: [
+      'EMERGENCY — refer immediately to tertiary hospital',
+      'Supportive care only — no specific antiviral',
+      'JE vaccine in UIP for endemic districts (UP, Assam, WB)',
+      'Prevent mosquito bites: nets, repellents, cover water bodies',
+    ],
+    description: 'Mosquito-borne flavivirus causing encephalitis. High mortality, high disability in survivors. Vaccine-preventable.',
+  ),
+
 ];
 
 

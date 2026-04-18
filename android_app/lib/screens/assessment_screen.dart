@@ -16,6 +16,7 @@ import '../l10n/translations.dart';
 import '../models/patient.dart';
 import '../services/ml_service.dart';
 import '../services/clinical_knowledge.dart';
+import '../services/ocr_service.dart';
 import 'results_screen.dart';
 
 import '../services/fuzzy_symptom_matcher.dart';
@@ -38,6 +39,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   // Patient info
   final _nameController = TextEditingController();
   final _ageController = TextEditingController();
+  final _householdController = TextEditingController();
   String _gender = 'Male';
 
   // Vitals
@@ -413,6 +415,9 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
         name: _nameController.text.isEmpty ? 'Unknown' : _nameController.text,
         age: age ?? 0,
         gender: _gender,
+        householdId: _householdController.text.trim().isEmpty
+            ? null
+            : _householdController.text.trim(),
       ),
       vitals: vitals,
       symptoms: allSymptoms.toList(),
@@ -513,6 +518,56 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
     if (image != null) {
       setState(() => _capturedImage = File(image.path));
     }
+  }
+
+  /// Scan a prescription / medical report via OCR and append the recognized
+  /// text (or any medicine-shaped lines) to the notes field.
+  Future<void> _scanPrescription() async {
+    final picker = ImagePicker();
+    final image = await picker.pickImage(
+      source: ImageSource.camera,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 85,
+    );
+    if (image == null) return;
+    if (!mounted) return;
+
+    // Show a quick spinner while OCR runs
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    final result = await OcrService.extractFromFile(image.path);
+    if (!mounted) return;
+    Navigator.of(context).pop(); // close spinner
+
+    if (result.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No text detected. Try again in better light.')),
+      );
+      return;
+    }
+
+    final meds = OcrService.extractMedicineLines(result);
+    final summary = meds.isNotEmpty
+        ? 'Scanned Rx:\n${meds.join('\n')}'
+        : 'Scanned text:\n${result.rawText.substring(0, result.rawText.length.clamp(0, 400))}';
+
+    setState(() {
+      final existing = _notesController.text.trim();
+      _notesController.text =
+          existing.isEmpty ? summary : '$existing\n\n$summary';
+    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(
+        meds.isNotEmpty
+            ? 'Detected ${meds.length} medicine line(s)'
+            : 'Text captured to notes',
+      )),
+    );
   }
 
   // ================================================================
@@ -712,6 +767,18 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
                 ),
               );
             }).toList(),
+          ),
+          const SizedBox(height: 20),
+          TextField(
+            controller: _householdController,
+            decoration: InputDecoration(
+              labelText: 'Household / Family ID (optional)',
+              helperText:
+                  'Same ID for family members → cluster view for contagion',
+              prefixIcon: const Icon(Icons.home_outlined),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
           ),
         ].animate(interval: 60.ms).fadeIn(duration: 250.ms),
       ),
@@ -963,6 +1030,17 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
               ),
             );
           }),
+
+          // OCR — scan an existing prescription or report to auto-fill notes
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: _scanPrescription,
+            icon: const Icon(Icons.document_scanner_outlined),
+            label: const Text('Scan prescription / report'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+          ),
 
           // Notes
           const SizedBox(height: 8),
@@ -1342,6 +1420,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
     _pageController.dispose();
     _nameController.dispose();
     _ageController.dispose();
+    _householdController.dispose();
     _tempController.dispose();
     _bpController.dispose();
     _hrController.dispose();

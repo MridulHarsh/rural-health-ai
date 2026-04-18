@@ -5,6 +5,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../l10n/translations.dart';
 import '../services/ml_service.dart';
 import '../services/database_service.dart';
+import '../services/inventory_service.dart';
+import '../services/mch_service.dart';
+import '../services/outbreak_detector.dart';
 
 class HomeScreen extends StatefulWidget {
   final MLService mlService;
@@ -18,6 +21,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   String _lang = 'en';
   int _recordCount = 0;
+  int _lowStockCount = 0;
+  int _mchDueCount = 0;
+  List<OutbreakAlert> _outbreaks = const [];
 
   @override
   void initState() {
@@ -28,10 +34,27 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     final count = await DatabaseService.getCount();
+    // Surface ops data: low-stock meds + overdue MCH items + outbreak clusters.
+    int low = 0;
+    int mch = 0;
+    List<OutbreakAlert> ob = const [];
+    try {
+      final items = await InventoryService.lowStock();
+      low = items.length;
+    } catch (_) {}
+    try {
+      mch = await MchService.pendingCount();
+    } catch (_) {}
+    try {
+      ob = await OutbreakDetector.detect();
+    } catch (_) {}
     if (!mounted) return;
     setState(() {
       _lang = prefs.getString('language') ?? 'en';
       _recordCount = count;
+      _lowStockCount = low;
+      _mchDueCount = mch;
+      _outbreaks = ob;
     });
   }
 
@@ -256,6 +279,98 @@ class _HomeScreenState extends State<HomeScreen> {
                   onTap: () async {
                     await Navigator.pushNamed(context, '/assessment');
                     _loadPrefs();
+                  },
+                ),
+
+                const SizedBox(height: 28),
+
+                // ── Outbreak alert banner (cluster-of-3+ cases in 7 days) ──
+                if (_outbreaks.isNotEmpty) ...[
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    margin: const EdgeInsets.only(bottom: 14),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Colors.red.shade200, width: 1.5),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          Icon(Icons.coronavirus_rounded,
+                              color: Colors.red.shade700),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Outbreak cluster detected',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                color: Colors.red.shade800,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
+                        ]),
+                        const SizedBox(height: 6),
+                        ...(_outbreaks.take(3).map((a) => Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                '${a.caseCount} cases of ${a.diseaseOrSymptom} in last ${a.windowDays} days',
+                                style: TextStyle(
+                                    color: Colors.red.shade900,
+                                    fontSize: 13),
+                              ),
+                            ))),
+                      ],
+                    ),
+                  ),
+                ],
+
+                // ── ASHA operational tools ──
+                Text(
+                  'ASHA Tools',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 14),
+                _FeatureCard(
+                  icon: Icons.medical_services_rounded,
+                  title: 'Medicine Kit',
+                  subtitle: _lowStockCount > 0
+                      ? '$_lowStockCount low-stock item${_lowStockCount == 1 ? '' : 's'}'
+                      : 'Inventory in stock',
+                  color: _lowStockCount > 0
+                      ? const Color(0xFFDC2626)
+                      : const Color(0xFF14B8A6),
+                  delay: 500,
+                  onTap: () async {
+                    await Navigator.pushNamed(context, '/inventory');
+                    _loadPrefs();
+                  },
+                ),
+                _FeatureCard(
+                  icon: Icons.pregnant_woman_rounded,
+                  title: 'Maternal & Child Health',
+                  subtitle: _mchDueCount > 0
+                      ? '$_mchDueCount visit${_mchDueCount == 1 ? '' : 's'} due'
+                      : 'ANC + immunization schedules',
+                  color: _mchDueCount > 0
+                      ? const Color(0xFFF59E0B)
+                      : const Color(0xFFEC4899),
+                  delay: 600,
+                  onTap: () async {
+                    await Navigator.pushNamed(context, '/mch');
+                    _loadPrefs();
+                  },
+                ),
+                _FeatureCard(
+                  icon: Icons.calculate_rounded,
+                  title: 'Pediatric Dosage',
+                  subtitle: 'Weight-based drug calculator',
+                  color: const Color(0xFF6366F1),
+                  delay: 700,
+                  onTap: () async {
+                    await Navigator.pushNamed(context, '/dosage');
                   },
                 ),
 

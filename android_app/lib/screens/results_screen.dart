@@ -1,5 +1,4 @@
 import 'dart:io';
-import "../services/pdf_service.dart";
 // results_screen.dart
 // Displays clinical engine results with red flag alerts,
 // reasoning, missing symptom prompts, and actionable next steps.
@@ -12,6 +11,10 @@ import '../l10n/translations.dart';
 import '../models/patient.dart';
 import '../services/database_service.dart';
 import '../services/specialist_models.dart';
+import '../services/pdf_service.dart';
+import '../services/tts_service.dart';
+import '../services/handoff_service.dart';
+import '../services/emergency_service.dart';
 
 class ResultsScreen extends StatefulWidget {
   final AssessmentResult result;
@@ -29,8 +32,120 @@ class ResultsScreen extends StatefulWidget {
 
 class _ResultsScreenState extends State<ResultsScreen> {
   bool _isSaved = false;
+  bool _ttsActive = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Fire the emergency alarm immediately when a red-flag triage lands here.
+    // This is the "don't miss it" signal — vibration is enough to alert the
+    // worker even if they've put the phone down.
+    if (widget.result.overallRisk == RiskLevel.emergency ||
+        widget.result.redFlag != null) {
+      EmergencyService.triggerAlarm();
+    }
+  }
+
+  @override
+  void dispose() {
+    TtsService().stop();
+    EmergencyService.cancel();
+    super.dispose();
+  }
 
   String _t(String key) => AppTranslations.t(key, widget.langCode);
+
+  /// Build the spoken narration script from the result. Prioritizes red flag
+  /// action first (most urgent), then top condition + next steps.
+  String _buildNarration() {
+    final parts = <String>[];
+    if (widget.result.redFlag != null) {
+      parts.add('Warning.');
+      parts.add(widget.result.redFlag!.conditionName);
+      parts.add(widget.result.redFlag!.immediateAction);
+    } else if (widget.result.conditions.isNotEmpty) {
+      final top = widget.result.conditions.first;
+      final pct = (top.confidence * 100).round();
+      parts.add('Most likely condition: ${top.name}, $pct percent confidence.');
+      if (top.description != null && top.description!.isNotEmpty) {
+        parts.add(top.description!);
+      }
+    } else {
+      parts.add('No specific condition could be determined.');
+    }
+    if (widget.result.nextSteps.isNotEmpty) {
+      parts.add('Next steps: ' + widget.result.nextSteps.take(3).join('. '));
+    }
+    return parts.join(' ');
+  }
+
+  Future<void> _toggleSpeak() async {
+    if (_ttsActive) {
+      await TtsService().stop();
+      if (!mounted) return;
+      setState(() => _ttsActive = false);
+      return;
+    }
+    setState(() => _ttsActive = true);
+    await TtsService().speak(_buildNarration(), langCode: widget.langCode);
+    // flutter_tts doesn't emit a synchronous "done" so we reset after a guess
+    // delay proportional to text length. User can also tap to stop.
+    if (!mounted) return;
+    final words = _buildNarration().split(RegExp(r'\s+')).length;
+    final waitMs = (words * 450).clamp(2000, 60000);
+    Future.delayed(Duration(milliseconds: waitMs), () {
+      if (!mounted) return;
+      setState(() => _ttsActive = false);
+    });
+  }
+
+  Future<void> _sendToPhc() async {
+    final r = widget.result;
+    final buf = StringBuffer();
+    buf.writeln('ASHA Referral — Rural Health AI');
+    buf.writeln('Patient: ${r.patient.name}, age ${r.patient.age}, ${r.patient.gender}');
+    buf.writeln('Risk: ${r.overallRisk.name.toUpperCase()}');
+    if (r.redFlag != null) {
+      buf.writeln('⚠ RED FLAG: ${r.redFlag!.conditionName}');
+      buf.writeln('Action: ${r.redFlag!.immediateAction}');
+    }
+    if (r.conditions.isNotEmpty) {
+      buf.writeln('Differential:');
+      for (var i = 0; i < r.conditions.length && i < 3; i++) {
+        final c = r.conditions[i];
+        buf.writeln('  ${i + 1}. ${c.name} (${(c.confidence * 100).round()}%)');
+      }
+    }
+    if (r.symptoms.isNotEmpty) {
+      buf.writeln('Symptoms: ${r.symptoms.take(8).join(', ')}');
+    }
+    buf.writeln('Sent from Rural Health AI');
+    final ok = await HandoffService.sendToWhatsApp(message: buf.toString());
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('WhatsApp not available on this device')),
+      );
+    }
+  }
+
+  Future<void> _draftEmergencySms() async {
+    final r = widget.result;
+    final buf = StringBuffer();
+    buf.write('EMERGENCY: ');
+    if (r.redFlag != null) {
+      buf.write('${r.redFlag!.conditionName}. ');
+    } else if (r.conditions.isNotEmpty) {
+      buf.write('Suspected ${r.conditions.first.name}. ');
+    }
+    buf.write('Patient ${r.patient.name}, age ${r.patient.age}. ');
+    buf.write('Need urgent transport.');
+    await HandoffService.draftSms(message: buf.toString());
+  }
+
+  Future<void> _dial108() async {
+    await HandoffService.dial(HandoffService.defaultEmergencyNumber);
+  }
 
   // ── Risk colors ──
   Color _riskColor(RiskLevel risk) {
@@ -811,8 +926,87 @@ class _ResultsScreenState extends State<ResultsScreen> {
   // ================================================================
 
   Widget _buildActionButtons() {
+    final isEmergency =
+        widget.result.overallRisk == RiskLevel.emergency ||
+            widget.result.redFlag != null;
     return Column(
       children: [
+        // Emergency row — only when red-flag or emergency risk
+        if (isEmergency)
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _dial108,
+                  icon: const Icon(Icons.phone_in_talk_rounded),
+                  label: const Text('Dial 108'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.shade700,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _draftEmergencySms,
+                  icon: const Icon(Icons.sms_rounded),
+                  label: const Text('SMS PHC'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.shade500,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        if (isEmergency) const SizedBox(height: 12),
+
+        // Listen + WhatsApp row (primary row, always visible)
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _toggleSpeak,
+                icon: Icon(
+                  _ttsActive
+                      ? Icons.stop_circle_rounded
+                      : Icons.volume_up_rounded,
+                  size: 20,
+                ),
+                label: Text(_ttsActive ? 'Stop' : 'Listen'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _sendToPhc,
+                icon: const Icon(Icons.send_rounded, size: 20),
+                label: const Text('To PHC'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
         // Save button
         SizedBox(
           width: double.infinity,

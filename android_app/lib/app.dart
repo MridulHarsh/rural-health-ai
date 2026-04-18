@@ -8,6 +8,10 @@ import 'screens/home_screen.dart';
 import 'screens/assessment_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/inventory_screen.dart';
+import 'screens/mch_screen.dart';
+import 'screens/dosage_screen.dart';
+import 'services/encryption_service.dart';
 import 'services/ml_service.dart';
 
 class RuralHealthApp extends StatefulWidget {
@@ -38,6 +42,13 @@ class _RuralHealthAppState extends State<RuralHealthApp> {
     final langCode = prefs.getString('language') ?? 'en';
     if (!mounted) return;
     setState(() => _locale = Locale(langCode));
+
+    // Initialize at-rest encryption for PII. Cheap and synchronous-enough.
+    try {
+      await EncryptionService.initialize();
+    } catch (e) {
+      debugPrint('EncryptionService init failed (PII will be plaintext): $e');
+    }
 
     // Pre-load ML model
     try {
@@ -178,6 +189,9 @@ class _RuralHealthAppState extends State<RuralHealthApp> {
         '/assessment': (context) => AssessmentScreen(mlService: _mlService),
         '/history': (context) => const HistoryScreen(),
         '/settings': (context) => const SettingsScreen(),
+        '/inventory': (context) => const InventoryScreen(),
+        '/mch': (context) => const MchScreen(),
+        '/dosage': (context) => const DosageScreen(),
       },
     );
   }

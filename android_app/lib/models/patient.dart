@@ -8,6 +8,9 @@ class Patient {
   final int age;
   final String gender;
   final DateTime createdAt;
+  /// Household identifier — groups family members for cluster/contagion view.
+  /// A free-form string (e.g., village + head-of-household name + phone suffix).
+  final String? householdId;
 
   Patient({
     required this.id,
@@ -15,6 +18,7 @@ class Patient {
     required this.age,
     required this.gender,
     DateTime? createdAt,
+    this.householdId,
   }) : createdAt = createdAt ?? DateTime.now();
 
   Map<String, dynamic> toJson() => {
@@ -23,6 +27,7 @@ class Patient {
         'age': age,
         'gender': gender,
         'createdAt': createdAt.toIso8601String(),
+        'householdId': householdId,
       };
 
   factory Patient.fromJson(Map<String, dynamic> json) => Patient(
@@ -31,6 +36,7 @@ class Patient {
         age: json['age'],
         gender: json['gender'],
         createdAt: DateTime.parse(json['createdAt']),
+        householdId: json['householdId'] as String?,
       );
 }
 
