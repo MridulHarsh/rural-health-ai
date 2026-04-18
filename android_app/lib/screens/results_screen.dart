@@ -12,7 +12,6 @@ import '../models/patient.dart';
 import '../services/database_service.dart';
 import '../services/specialist_models.dart';
 import '../services/pdf_service.dart';
-import '../services/tts_service.dart';
 import '../services/handoff_service.dart';
 import '../services/emergency_service.dart';
 
@@ -32,7 +31,6 @@ class ResultsScreen extends StatefulWidget {
 
 class _ResultsScreenState extends State<ResultsScreen> {
   bool _isSaved = false;
-  bool _ttsActive = false;
 
   @override
   void initState() {
@@ -48,56 +46,11 @@ class _ResultsScreenState extends State<ResultsScreen> {
 
   @override
   void dispose() {
-    TtsService().stop();
     EmergencyService.cancel();
     super.dispose();
   }
 
   String _t(String key) => AppTranslations.t(key, widget.langCode);
-
-  /// Build the spoken narration script from the result. Prioritizes red flag
-  /// action first (most urgent), then top condition + next steps.
-  String _buildNarration() {
-    final parts = <String>[];
-    if (widget.result.redFlag != null) {
-      parts.add('Warning.');
-      parts.add(widget.result.redFlag!.conditionName);
-      parts.add(widget.result.redFlag!.immediateAction);
-    } else if (widget.result.conditions.isNotEmpty) {
-      final top = widget.result.conditions.first;
-      final pct = (top.confidence * 100).round();
-      parts.add('Most likely condition: ${top.name}, $pct percent confidence.');
-      if (top.description != null && top.description!.isNotEmpty) {
-        parts.add(top.description!);
-      }
-    } else {
-      parts.add('No specific condition could be determined.');
-    }
-    if (widget.result.nextSteps.isNotEmpty) {
-      parts.add('Next steps: ' + widget.result.nextSteps.take(3).join('. '));
-    }
-    return parts.join(' ');
-  }
-
-  Future<void> _toggleSpeak() async {
-    if (_ttsActive) {
-      await TtsService().stop();
-      if (!mounted) return;
-      setState(() => _ttsActive = false);
-      return;
-    }
-    setState(() => _ttsActive = true);
-    await TtsService().speak(_buildNarration(), langCode: widget.langCode);
-    // flutter_tts doesn't emit a synchronous "done" so we reset after a guess
-    // delay proportional to text length. User can also tap to stop.
-    if (!mounted) return;
-    final words = _buildNarration().split(RegExp(r'\s+')).length;
-    final waitMs = (words * 450).clamp(2000, 60000);
-    Future.delayed(Duration(milliseconds: waitMs), () {
-      if (!mounted) return;
-      setState(() => _ttsActive = false);
-    });
-  }
 
   Future<void> _sendToPhc() async {
     final r = widget.result;
@@ -968,44 +921,20 @@ class _ResultsScreenState extends State<ResultsScreen> {
           ),
         if (isEmergency) const SizedBox(height: 12),
 
-        // Read-aloud + WhatsApp row (primary row, always visible).
-        // Read-aloud narrates the result in the patient's selected language —
-        // a low-literacy accessibility feature for ASHA workers.
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _toggleSpeak,
-                icon: Icon(
-                  _ttsActive
-                      ? Icons.stop_circle_rounded
-                      : Icons.record_voice_over_rounded,
-                  size: 20,
-                ),
-                label: Text(_ttsActive ? 'Stop' : 'Read aloud'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
+        // PHC handoff — full-width primary secondary action.
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _sendToPhc,
+            icon: const Icon(Icons.send_rounded, size: 20),
+            label: const Text('Send summary to PHC'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _sendToPhc,
-                icon: const Icon(Icons.send_rounded, size: 20),
-                label: const Text('To PHC'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
         const SizedBox(height: 12),
 

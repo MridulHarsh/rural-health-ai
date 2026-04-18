@@ -47,7 +47,6 @@ dependencies:
   uuid: ^4.3.3
 
   # ── New: competitive-parity features ──
-  flutter_tts: ^4.0.2                          # Voice-narrated results in regional language
   url_launcher: ^6.3.0                         # WhatsApp / SMS / tel intents for PHC handoff
   vibration: ^2.0.0                            # Emergency alarm on red-flag trigger
   encrypt: ^5.0.3                              # AES-256 at-rest encryption for PII
