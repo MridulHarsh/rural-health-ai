@@ -8,6 +8,12 @@ class SpecialistScreening {
   final double riskScore;
   final String riskLabel;
   final String predictedClass;
+  /// Fraction of the model's expected features that were actually present
+  /// in the input (0.0–1.0). Features that were missing got zero-filled,
+  /// which biases numeric models toward "normal/low-risk" — UI callers
+  /// should display a "partial data" indicator when this is below ~0.7
+  /// and down-weight the reported risk in their decision flow.
+  final double featureCoverage;
 
   SpecialistScreening({
     required this.modelName,
@@ -15,12 +21,14 @@ class SpecialistScreening {
     required this.riskScore,
     required this.riskLabel,
     required this.predictedClass,
+    required this.featureCoverage,
   });
 
   Map<String, dynamic> toJson() => {
     'modelName': modelName, 'modelKey': modelKey,
     'riskScore': riskScore, 'riskLabel': riskLabel,
     'predictedClass': predictedClass,
+    'featureCoverage': featureCoverage,
   };
 }
 
@@ -155,12 +163,15 @@ class SpecialistModelsService {
             : (risk >= 0.4 ? 'Moderate Risk' : 'Low Risk');
       }
 
+      final coverage =
+          m.features.isEmpty ? 1.0 : matched / m.features.length;
       return SpecialistScreening(
         modelName: m.name,
         modelKey: m.key,
         riskScore: risk.clamp(0.0, 1.0),
         riskLabel: riskLabel,
         predictedClass: m.classes[bi].trim(),
+        featureCoverage: coverage,
       );
     } catch (e) {
       print('[Specialist] ${m.name} error: $e');

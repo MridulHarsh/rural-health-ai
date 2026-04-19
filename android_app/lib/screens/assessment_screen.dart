@@ -261,8 +261,16 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
       final decoded = img.decodeImage(bytes);
       if (decoded == null) return null;
 
+      // Apply EXIF orientation. Phone cameras often save portrait photos
+      // with EXIF rotation=6 rather than rotating pixels — without baking
+      // it in, a landscape-held photo of a lesion gets fed to the model
+      // rotated 90°, garbling its shape. bakeOrientation() applies the
+      // rotation and strips the tag so downstream resize operates on the
+      // correct pixel orientation.
+      final oriented = img.bakeOrientation(decoded);
+
       // Resize to 128x128
-      final resized = img.copyResize(decoded, width: 128, height: 128);
+      final resized = img.copyResize(oriented, width: 128, height: 128);
 
       // Convert to normalized float array [128][128][3]
       final imageData = List.generate(128, (y) {
@@ -508,7 +516,36 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   Future<void> _captureImage(ImageSource source) async {
     if (source == ImageSource.camera) {
       final status = await Permission.camera.request();
-      if (!status.isGranted) return;
+      if (!status.isGranted) {
+        // On Android, once the user taps "Don't ask again" Permission.camera
+        // returns permanentlyDenied and .request() will never re-prompt.
+        // Surface a dialog that routes them to the app's Settings page
+        // so they can still unblock the workflow.
+        if (!mounted) return;
+        if (status.isPermanentlyDenied) {
+          final goToSettings = await showDialog<bool>(
+            context: context,
+            builder: (dialogCtx) => AlertDialog(
+              title: Text(_t('camera_permission_denied_title')),
+              content: Text(_t('camera_permission_denied_body')),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogCtx, false),
+                  child: Text(_t('cancel')),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogCtx, true),
+                  child: Text(_t('open_settings')),
+                ),
+              ],
+            ),
+          );
+          if (goToSettings == true) {
+            await openAppSettings();
+          }
+        }
+        return;
+      }
     }
 
     final picker = ImagePicker();
@@ -543,21 +580,38 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator()),
     );
-    final result = await OcrService.extractFromFile(image.path);
+    // OcrService.extractFromFile already catches ML Kit failures internally
+    // and returns an empty OcrResult — we still wrap it defensively because
+    // future internal changes could surface a throw (e.g. from file
+    // not-found) that would otherwise crash the assessment flow silently
+    // after the spinner closes.
+    OcrResult? result;
+    try {
+      result = await OcrService.extractFromFile(image.path);
+    } catch (_) {
+      result = null;
+    }
     if (!mounted) return;
     Navigator.of(context).pop(); // close spinner
 
+    if (result == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_t('ocr_error'))),
+      );
+      return;
+    }
     if (result.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No text detected. Try again in better light.')),
+        SnackBar(content: Text(_t('ocr_no_text'))),
       );
       return;
     }
 
     final meds = OcrService.extractMedicineLines(result);
+    final rawText = result.rawText;
     final summary = meds.isNotEmpty
         ? 'Scanned Rx:\n${meds.join('\n')}'
-        : 'Scanned text:\n${result.rawText.substring(0, result.rawText.length.clamp(0, 400))}';
+        : 'Scanned text:\n${rawText.substring(0, rawText.length.clamp(0, 400))}';
 
     setState(() {
       final existing = _notesController.text.trim();
@@ -578,6 +632,44 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   // BUILD
   // ================================================================
 
+  /// True when the patient has entered anything worth protecting on back-press.
+  /// Used by both the system back gesture and the AppBar back button so the
+  /// UX is consistent.
+  bool _hasUnsavedInput() {
+    return _nameController.text.trim().isNotEmpty ||
+        _ageController.text.trim().isNotEmpty ||
+        _selectedSymptoms.isNotEmpty ||
+        _capturedImage != null ||
+        _notesController.text.trim().isNotEmpty;
+  }
+
+  /// Ask the ASHA to confirm before discarding in-progress assessment data.
+  /// Returns true if the user confirmed a discard.
+  Future<bool> _confirmDiscard() async {
+    if (!_hasUnsavedInput()) return true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(_t('discard_assessment_title')),
+        content: Text(_t('discard_assessment_body')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(_t('discard_keep_editing')),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(_t('discard_confirm')),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final steps = [
@@ -587,12 +679,31 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
       _t('camera_input'),
     ];
 
-    return Scaffold(
+    return PopScope(
+      // canPop=false intercepts the system back gesture so we can prompt
+      // before losing mid-assessment data. If the user confirms a discard,
+      // we call Navigator.pop ourselves.
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        // Capture navigator before the await so we don't use `context`
+        // after an async gap (lint: use_build_context_synchronously).
+        final navigator = Navigator.of(context);
+        final confirmed = await _confirmDiscard();
+        if (!mounted) return;
+        if (confirmed) navigator.pop();
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: Text(_t('new_assessment')),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () async {
+            final navigator = Navigator.of(context);
+            final confirmed = await _confirmDiscard();
+            if (!mounted) return;
+            if (confirmed) navigator.pop();
+          },
         ),
       ),
       body: Column(
@@ -715,6 +826,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
           ),
         ],
       ),
+    ),
     );
   }
 
