@@ -67,6 +67,19 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+
+            // R8 code shrinker for release builds. Our ProGuard file
+            // carries `-dontwarn` rules for optional ML Kit script
+            // recognizers we don't bundle (Chinese/Japanese/Korean/
+            // Devanagari) plus a couple of other optional plugin
+            // references. Without these, R8 fails the build on
+            // unresolved references in minifyReleaseWithR8.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }
