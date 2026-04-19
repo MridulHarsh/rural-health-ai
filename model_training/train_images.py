@@ -162,11 +162,19 @@ def collect_images_for_category(data_dir, dataset_names, label):
 # ═══════════════════════════════════════════════════════════════
 
 def load_single_image(path):
-    """Load and preprocess one image."""
+    """Load and preprocess one image.
+
+    Uses a context manager so the underlying file handle is closed even when
+    the conversion or resize fails. Without this, an unbounded number of
+    per-class loads (max_per_class can be 1500+ on M2-optimized runs) could
+    exhaust file descriptors on the default macOS 256-FD soft limit.
+    """
     try:
-        img = Image.open(path).convert('RGB')
-        img = img.resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
-        return np.array(img, dtype=np.float32) / 255.0
+        with Image.open(path) as raw:
+            img = raw.convert('RGB').resize(
+                (IMG_SIZE, IMG_SIZE), Image.LANCZOS,
+            )
+            return np.array(img, dtype=np.float32) / 255.0
     except Exception:
         return None
 

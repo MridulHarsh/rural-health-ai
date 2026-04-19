@@ -402,26 +402,28 @@ if DROP_SUPERGROUPS:
     dropped = [c for c in class_names if not keep_mask[class_names.index(c)]]
     if dropped:
         print(f"\n🗑  Dropping supergroups: {dropped}")
-    old_to_new = {}
+    # Build one dense lookup table: old_label_idx → new_label_idx, or -1 for
+    # dropped classes. This avoids the earlier argmax-after-boolean-mask
+    # trick, which silently mis-mapped labels if the masked batch happened
+    # to exclude a dropped class (argmax over an all-zero row returned 0,
+    # the first class, instead of "no match").
+    drop_sentinel = -1
+    remap_arr_drop = [drop_sentinel] * len(class_names)
     for old_idx, cls in enumerate(class_names):
         if cls in kept_classes:
-            old_to_new[old_idx] = kept_classes.index(cls)
+            remap_arr_drop[old_idx] = kept_classes.index(cls)
+    remap_table_drop = tf.constant(remap_arr_drop, dtype=tf.int64)
 
     def _filter_and_relabel(x, y):
-        keep = tf.reduce_any(
-            tf.stack([tf.equal(y, k) for k in old_to_new.keys()]),
-            axis=0,
-        )
-        x, y = tf.boolean_mask(x, keep), tf.boolean_mask(y, keep)
-        lookup_keys = tf.constant(list(old_to_new.keys()), dtype=y.dtype)
-        lookup_vals = tf.constant(list(old_to_new.values()), dtype=y.dtype)
-        # argmax trick: find index of y in lookup_keys, pick matching val
-        match = tf.argmax(
-            tf.cast(tf.equal(y[:, None], lookup_keys[None, :]), tf.int32),
-            axis=1,
-        )
-        return x, tf.gather(lookup_vals, match)
+        new_y = tf.gather(remap_table_drop, tf.cast(y, tf.int64))
+        keep = tf.greater_equal(new_y, 0)
+        return tf.boolean_mask(x, keep), tf.boolean_mask(new_y, keep)
 
+    # .unbatch().batch(...) is intentional: the filter produces
+    # variable-size batches per call, so we re-batch to a consistent size
+    # for the downstream model.fit loop. Order within the shuffle buffer is
+    # preserved, so this does not introduce non-determinism beyond what
+    # image_dataset_from_directory's initial shuffle already introduces.
     train_ds_raw = train_ds_raw.unbatch().batch(BATCH_SIZE).map(
         _filter_and_relabel, num_parallel_calls=tf.data.AUTOTUNE
     )
