@@ -17,14 +17,31 @@ class MLService {
   final SpecialistModelsService _specialistModels = SpecialistModelsService();
 
   // ── Image models ──
-  // Skin model permanently removed (32% accuracy, duplicate class names
-  // across source datasets). Do not re-add without a reliable replacement.
+  // Skin model re-added 2026-04-19 after DermNet → 8-clinical-supergroup
+  // retraining. KNOWN TO BE BELOW THE 70% SHIP GATE — see training metadata
+  // in assets/models/skin_disease_model_metadata.json for exact val_acc.
+  // Callers MUST check SKIN_CONFIDENCE_FLOOR before surfacing top-1 as a
+  // diagnosis; low-confidence predictions are returned with the sentinel
+  // label "Low confidence — confirm at PHC".
+  Interpreter? _skinModel;
   Interpreter? _eyeModel;
   Interpreter? _lungModel;
   Interpreter? _malariaModel;
+  List<String>? _skinClasses;
   List<String>? _eyeClasses;
   List<String>? _lungClasses;
   List<String>? _malariaClasses;
+
+  /// Minimum top-1 softmax probability below which we refuse to surface
+  /// the skin classifier's label. The current bundled model lands at
+  /// val_acc 0.407 with 6 of 8 supergroups below 50% recall (Bacterial
+  /// Infection at 9% is effectively broken). With that profile, we need
+  /// a stiff confidence floor to keep the UI from confidently confusing
+  /// bacterial cellulitis with an autoimmune rash. Raise toward 0.70
+  /// once a retrained model clears the ship gate.
+  static const double skinConfidenceFloor = 0.55;
+  static const String skinLowConfidenceLabel =
+      'Low confidence — confirm at PHC';
 
   // ── Tabular TFLite (optional ML signal) ──
   Interpreter? _tabularModel;
@@ -174,7 +191,21 @@ class MLService {
   // ================================================================
 
   Future<void> _loadImageModels() async {
-    // Skin model permanently removed (32% accuracy — not reliable)
+    try {
+      _skinModel = await Interpreter.fromAsset(
+        'assets/models/skin_disease_model.tflite',
+      );
+      final sj = await rootBundle.loadString(
+        'assets/models/skin_disease_model_classes.json',
+      );
+      _skinClasses = List<String>.from(jsonDecode(sj));
+      debugPrint(
+        '[MLService] Skin model loaded: ${_skinClasses!.length} classes '
+        '(below-gate model — confidence floor $skinConfidenceFloor)',
+      );
+    } catch (e) {
+      debugPrint('[MLService] Skin model load error: $e');
+    }
 
     try {
       _eyeModel = await Interpreter.fromAsset('assets/models/eye_disease_model.tflite');
@@ -204,7 +235,13 @@ class MLService {
     }
   }
 
-  /// Classify an image. [type]: 'eye', 'lung', 'malaria'.
+  /// Classify an image. [type]: 'skin', 'eye', 'lung', 'malaria'.
+  ///
+  /// For [type] == 'skin', the model is known to be below the 70% ship gate.
+  /// If the top-1 softmax probability is below [skinConfidenceFloor], the
+  /// returned list starts with [skinLowConfidenceLabel] (prob = top-1) so
+  /// the UI can show a "preliminary — confirm at PHC" warning instead of
+  /// treating the label as a diagnosis. The original top-3 still follows.
   Future<List<MapEntry<String, double>>> classifyImage({
     required List<List<List<double>>> imageData,
     required String type,
@@ -213,6 +250,10 @@ class MLService {
     List<String>? classes;
 
     switch (type) {
+      case 'skin':
+        model = _skinModel;
+        classes = _skinClasses;
+        break;
       case 'eye':
         model = _eyeModel;
         classes = _eyeClasses;
@@ -258,6 +299,20 @@ class MLService {
 
       final results = merged.entries.toList()
         ..sort((a, b) => b.value.compareTo(a.value));
+
+      // Below-gate mitigation: prepend a low-confidence marker for skin
+      // predictions that fall under the floor. UI should display this
+      // sentinel as a "preliminary — confirm at PHC" banner and still
+      // allow the user to see the ranked alternatives beneath it.
+      if (type == 'skin' &&
+          results.isNotEmpty &&
+          results.first.value < skinConfidenceFloor) {
+        return [
+          MapEntry(skinLowConfidenceLabel, results.first.value),
+          ...results.take(3),
+        ];
+      }
+
       return results.take(3).toList();
     } catch (e) {
       debugPrint('[MLService] classifyImage error: $e');

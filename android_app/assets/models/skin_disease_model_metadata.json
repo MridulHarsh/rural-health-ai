@@ -1,11 +1,153 @@
 {
-  "model": "Skin Disease",
-  "accuracy": 0.3567,
-  "n_classes": 10,
-  "total_images": 10987,
-  "input_size": 128,
-  "tflite_mb": 2.5,
-  "epochs": 15,
-  "batch_size": 16,
-  "device": "Metal GPU"
+  "model": "MobileNetV2 (imagenet transfer, top-30 fine-tuned)",
+  "img_size": 128,
+  "input_shape": [
+    128,
+    128,
+    3
+  ],
+  "input_normalization": "mobilenet_v2.preprocess_input (scales to [-1, 1])",
+  "num_classes": 8,
+  "classes": [
+    "Bacterial Infection",
+    "Fungal Infection",
+    "Viral Infection",
+    "Parasitic and Contact",
+    "Inflammatory and Eczema",
+    "Allergic and Drug Reaction",
+    "Neoplastic or Tumor",
+    "Autoimmune or Systemic"
+  ],
+  "val_accuracy": 0.4072645306587219,
+  "val_loss": 1.9131046533584595,
+  "per_class_recall": {
+    "Bacterial Infection": 0.09090909090909091,
+    "Fungal Infection": 0.5991902834008097,
+    "Viral Infection": 0.3419354838709677,
+    "Parasitic and Contact": 0.23972602739726026,
+    "Inflammatory and Eczema": 0.5194109772423026,
+    "Allergic and Drug Reaction": 0.27906976744186046,
+    "Neoplastic or Tumor": 0.4031339031339031,
+    "Autoimmune or Systemic": 0.22348484848484848
+  },
+  "weak_classes": [
+    {
+      "name": "Bacterial Infection",
+      "recall": 0.09090909090909091
+    },
+    {
+      "name": "Viral Infection",
+      "recall": 0.3419354838709677
+    },
+    {
+      "name": "Parasitic and Contact",
+      "recall": 0.23972602739726026
+    },
+    {
+      "name": "Allergic and Drug Reaction",
+      "recall": 0.27906976744186046
+    },
+    {
+      "name": "Neoplastic or Tumor",
+      "recall": 0.4031339031339031
+    },
+    {
+      "name": "Autoimmune or Systemic",
+      "recall": 0.22348484848484848
+    }
+  ],
+  "training": {
+    "stage1_epochs": 12,
+    "stage2_epochs": 15,
+    "stage1_best_val_acc": 0.36451300978660583,
+    "stage2_best_val_acc": 0.4072645306587219,
+    "stage_used_in_final_model": "stage2",
+    "unfreeze_layers": 30,
+    "fine_tune_lr": 3e-05,
+    "batch_size": 32,
+    "val_split": 0.2,
+    "seed": 42,
+    "dataset_dir": "/kaggle/input/datasets/shubhamgoel27/dermnet/train",
+    "dataset_dir_secondary": "/kaggle/input/datasets/shubhamgoel27/dermnet/test"
+  },
+  "clinical_merging": {
+    "active": true,
+    "detected_as_dermnet": true,
+    "dermnet_match_count": 23,
+    "original_class_count": 23,
+    "supergroup_count": 8,
+    "original_classes": [
+      "Acne and Rosacea Photos",
+      "Actinic Keratosis Basal Cell Carcinoma and other Malignant Lesions",
+      "Atopic Dermatitis Photos",
+      "Bullous Disease Photos",
+      "Cellulitis Impetigo and other Bacterial Infections",
+      "Eczema Photos",
+      "Exanthems and Drug Eruptions",
+      "Hair Loss Photos Alopecia and other Hair Diseases",
+      "Herpes HPV and other STDs Photos",
+      "Light Diseases and Disorders of Pigmentation",
+      "Lupus and other Connective Tissue diseases",
+      "Melanoma Skin Cancer Nevi and Moles",
+      "Nail Fungus and other Nail Disease",
+      "Poison Ivy Photos and other Contact Dermatitis",
+      "Psoriasis pictures Lichen Planus and related diseases",
+      "Scabies Lyme Disease and other Infestations and Bites",
+      "Seborrheic Keratoses and other Benign Tumors",
+      "Systemic Disease",
+      "Tinea Ringworm Candidiasis and other Fungal Infections",
+      "Urticaria Hives",
+      "Vascular Tumors",
+      "Vasculitis Photos",
+      "Warts Molluscum and other Viral Infections"
+    ],
+    "supergroup_membership": {
+      "Bacterial Infection": [
+        "Cellulitis Impetigo and other Bacterial Infections"
+      ],
+      "Fungal Infection": [
+        "Nail Fungus and other Nail Disease",
+        "Tinea Ringworm Candidiasis and other Fungal Infections"
+      ],
+      "Viral Infection": [
+        "Herpes HPV and other STDs Photos",
+        "Warts Molluscum and other Viral Infections"
+      ],
+      "Parasitic and Contact": [
+        "Poison Ivy Photos and other Contact Dermatitis",
+        "Scabies Lyme Disease and other Infestations and Bites"
+      ],
+      "Inflammatory and Eczema": [
+        "Acne and Rosacea Photos",
+        "Atopic Dermatitis Photos",
+        "Eczema Photos",
+        "Psoriasis pictures Lichen Planus and related diseases"
+      ],
+      "Allergic and Drug Reaction": [
+        "Exanthems and Drug Eruptions",
+        "Urticaria Hives"
+      ],
+      "Neoplastic or Tumor": [
+        "Actinic Keratosis Basal Cell Carcinoma and other Malignant Lesions",
+        "Melanoma Skin Cancer Nevi and Moles",
+        "Seborrheic Keratoses and other Benign Tumors",
+        "Vascular Tumors"
+      ],
+      "Autoimmune or Systemic": [
+        "Bullous Disease Photos",
+        "Hair Loss Photos Alopecia and other Hair Diseases",
+        "Light Diseases and Disorders of Pigmentation",
+        "Lupus and other Connective Tissue diseases",
+        "Systemic Disease",
+        "Vasculitis Photos"
+      ]
+    }
+  },
+  "gates": {
+    "min_val_accuracy": 0.7,
+    "min_per_class_recall": 0.5,
+    "overall_passed": false,
+    "per_class_passed": false
+  },
+  "ship_approved": false
 }
