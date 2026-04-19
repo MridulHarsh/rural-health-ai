@@ -1167,6 +1167,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
                   DropdownMenuItem(value: 'eye', child: Text('\u{1F441} Eye Photo — Cataract, Glaucoma, DR')),
                   DropdownMenuItem(value: 'lung', child: Text('\u{1FA7B} Chest X-ray — Pneumonia, TB, COVID')),
                   DropdownMenuItem(value: 'malaria', child: Text('\u{1FA78} Blood Smear — Malaria Parasite')),
+                  DropdownMenuItem(value: 'skin', child: Text('\u{270B} Skin Photo — Triage Screening')),
                 ],
                 onChanged: (val) {
                   if (val != null) setState(() => _imageType = val);
@@ -1193,7 +1194,9 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
                         ? 'Take a clear close-up photo of the eye'
                         : _imageType == 'lung'
                             ? 'Take a photo of the chest X-ray report'
-                            : 'Take a photo of the blood smear slide',
+                            : _imageType == 'skin'
+                                ? 'Well-lit close-up of the affected skin. Triage only — confirm at PHC.'
+                                : 'Take a photo of the blood smear slide',
                     style: TextStyle(fontSize: 12, color: Colors.blue.shade700),
                   ),
                 ),
@@ -1241,6 +1244,56 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
                 // Show classification results if available
                 if (_imageResults != null && _imageResults!.isNotEmpty) ...[
                   const SizedBox(height: 12),
+
+                  // Low-confidence banner for skin (the model is below the
+                  // ship gate; MLService prepends skinLowConfidenceLabel
+                  // when top-1 probability < skinConfidenceFloor).
+                  if (_imageResults!.first.key ==
+                      MLService.skinLowConfidenceLabel) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.amber.shade400),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.warning_amber_rounded,
+                              color: Colors.amber.shade800, size: 22),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Preliminary — please confirm at PHC',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.amber.shade900,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'The AI is not confident about this skin image. '
+                                  'The alternatives below are shown for reference, but '
+                                  'this case should be reviewed by a clinician.',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.amber.shade900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
@@ -1259,9 +1312,19 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        ..._imageResults!.map((r) {
+                        ..._imageResults!
+                            .where((r) =>
+                                r.key != MLService.skinLowConfidenceLabel)
+                            .map((r) {
                           final pct = (r.value * 100).toStringAsFixed(1);
-                          final isTop = r == _imageResults!.first;
+                          // "Top" styling is reserved for predictions the
+                          // model is actually confident about. When the
+                          // sentinel is in the list, we don't bold any row
+                          // because there is no trusted top-1.
+                          final hasSentinel = _imageResults!.first.key ==
+                              MLService.skinLowConfidenceLabel;
+                          final isTop = !hasSentinel &&
+                              r == _imageResults!.first;
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 4),
                             child: Row(

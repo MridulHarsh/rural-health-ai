@@ -282,7 +282,30 @@ class MLService {
         1,
         (_) => List<double>.filled(classes!.length, 0.0),
       );
-      model.run([imageData], output);
+
+      // Skin model preprocessing-range stopgap.
+      //
+      // eye/lung/malaria models were trained by train_images.py which feeds
+      // [0, 1]-normalized pixels (img/255.0). The current skin model was
+      // trained with mobilenet_v2.preprocess_input baked into the graph,
+      // which maps [0, 255] → [-1, 1] via true_divide(127.5)→subtract(1).
+      // Feeding [0, 1] inputs to it collapses every pixel near -1 and the
+      // model predicts noise.
+      //
+      // Stopgap: scale [0, 1] → [0, 255] before inference, so the baked-in
+      // preprocess_input receives what it expects. Cost is one pass of ~49k
+      // float multiplications (sub-millisecond). Next retrain should drop
+      // preprocess_input from the graph to match train_images.py's
+      // convention; when that lands, delete this branch.
+      final input = type == 'skin'
+          ? imageData
+              .map((row) => row
+                  .map((px) => px.map((c) => c * 255.0).toList())
+                  .toList())
+              .toList()
+          : imageData;
+
+      model.run([input], output);
       final probs = output[0];
 
       // Merge duplicate/variant class labels coming from noisy training data.

@@ -11,6 +11,7 @@ import '../l10n/translations.dart';
 import '../models/patient.dart';
 import '../services/database_service.dart';
 import '../services/specialist_models.dart';
+import '../services/ml_service.dart';
 import '../services/pdf_service.dart';
 import '../services/handoff_service.dart';
 import '../services/emergency_service.dart';
@@ -1056,7 +1057,18 @@ class _ResultsScreenState extends State<ResultsScreen> {
       'eye': 'Eye Disease Screening',
       'lung': 'Chest X-ray Analysis',
       'malaria': 'Malaria Smear Analysis',
+      'skin': 'Skin Triage Screening',
     }[imageType] ?? 'Image Analysis';
+
+    // The skin classifier prepends a sentinel MapEntry when top-1 probability
+    // falls below MLService.skinConfidenceFloor. In that case we suppress the
+    // confident-looking ranked list entirely and show a referral banner; the
+    // ranked alternatives below are informational-only.
+    final hasLowConfSentinel =
+        results.first.key == MLService.skinLowConfidenceLabel;
+    final renderedResults = hasLowConfSentinel
+        ? results.where((r) => r.key != MLService.skinLowConfidenceLabel).toList()
+        : results;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -1089,10 +1101,55 @@ class _ResultsScreenState extends State<ResultsScreen> {
               ),
             ],
           ),
+          if (hasLowConfSentinel) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.amber.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.amber.shade400),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.warning_amber_rounded,
+                      color: Colors.amber.shade800, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Preliminary — please confirm at PHC',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.amber.shade900,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'The AI is not confident about this skin image. '
+                          'Alternatives below are informational only.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.amber.shade900,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
-          ...results.map((r) {
+          ...renderedResults.map((r) {
             final pct = (r.value * 100).toStringAsFixed(1);
-            final isTop = r == results.first;
+            // When the sentinel is present we refuse to highlight any row as
+            // "top" — the model isn't confident enough to pick a winner.
+            final isTop = !hasLowConfSentinel && r == renderedResults.first;
             final confidence = r.value;
             final barColor = confidence > 0.7
                 ? Colors.red.shade600
@@ -1138,8 +1195,12 @@ class _ResultsScreenState extends State<ResultsScreen> {
               ),
             );
           }),
-          // ── Clinical guidance for the top prediction ──
-          _buildImageClassGuidance(results.first.key, results.first.value),
+          // Clinical guidance for the top prediction — skipped entirely when
+          // the model flagged low confidence, because the top label is then
+          // a PHC-referral sentinel (no guidance entry to look up anyway).
+          if (!hasLowConfSentinel)
+            _buildImageClassGuidance(
+                renderedResults.first.key, renderedResults.first.value),
           if (widget.result.imagePath != null &&
               File(widget.result.imagePath!).existsSync()) ...[
             const SizedBox(height: 8),
