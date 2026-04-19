@@ -41,7 +41,11 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.5'
+          # Must match or exceed the dev machine's Flutter SDK. 3.41.x
+          # is the first line that ships the Dart `intl 0.20.x` package
+          # pubspec.yaml depends on — Flutter 3.24.5 (the earlier pin)
+          # shipped intl 0.19.0 and failed pub get with a solver error.
+          flutter-version: '3.41.6'
           channel: stable
           cache: true
 
