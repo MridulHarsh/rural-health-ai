@@ -55,10 +55,12 @@ Push any commit (even a whitespace change). On the **Actions** tab you should no
 Download the resulting APK artifact and verify it's signed with your key, not debug:
 
 ```bash
-apksigner verify --verbose app-release.apk | grep -i 'Signer'
+apksigner verify --print-certs app-release.apk | grep "Subject:"
 ```
 
-You should see your certificate's DN (the name/org you typed into `keytool`). If it shows `CN=Android Debug` that means the signing step didn't run — check secret names in step 3.
+You should see your certificate's DN (the name/org you typed into `keytool`) — e.g. `Subject: CN=Jane Doe, O=CureBay, C=IN`. If it shows `CN=Android Debug` that means the signing step didn't run; go back to step 3 and double-check all four secret names (they're case-sensitive).
+
+If `apksigner` isn't on your PATH, it ships with the Android SDK build-tools — full path is usually `~/Library/Android/sdk/build-tools/<version>/apksigner` on macOS.
 
 ## 5 · Local signed builds (optional)
 
