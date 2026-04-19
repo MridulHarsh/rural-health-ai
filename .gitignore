@@ -54,6 +54,12 @@ env/
 **/android/app/release/
 **/android/**/GeneratedPluginRegistrant.java
 
+# ── Android signing (never commit keystores or passwords) ──
+**/android/keystore.properties
+**/android/app/*.jks
+**/android/app/*.keystore
+**/*-keystore.jks
+
 # ── Model training: large artifacts that can be regenerated ──
 # Deployment-ready TFLite/.json assets under android_app/assets/models/ ARE tracked.
 # The raw training artifacts (joblib pickles, checkpoints, datasets) are NOT.

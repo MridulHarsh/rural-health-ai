@@ -38,6 +38,28 @@ jobs:
       - name: Analyze (errors + warnings fail the build; infos allowed per CLAUDE.md)
         run: flutter analyze --no-fatal-infos
 
+      # Release signing — set up ONLY if the four signing secrets are
+      # configured on the repo. When they're absent (e.g. fork builds, or
+      # a fresh clone before secrets are added) we skip this step and the
+      # Gradle config at android/app/build.gradle.kts falls through to
+      # the debug keystore. See presentation/KEYSTORE_SETUP.md for the
+      # one-time secret-generation walkthrough.
+      - name: Configure release signing
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          cat > android/keystore.properties <<EOF
+          storeFile=app/upload-keystore.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
       - name: Build release APK
         run: flutter build apk --release
 

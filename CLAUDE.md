@@ -130,7 +130,7 @@ This is the most important architectural invariant in the app. A symptom selecte
 |---|---|---|---|---|
 | `disease_model.tflite` | 328-dim symptom vector | [2, 754] probs | 410 KB | General classifier (80.3% RF acc). Only 25 of its 754 classes overlap with curated `DiseaseProfile` IDs — the others are dead weight unless a profile is added |
 | `heart_disease.tflite`, `diabetes.tflite`, `kidney_disease.tflite`, `liver_disease.tflite`, `stroke_risk.tflite`, `maternal_risk.tflite` | Per-model feature vector | Binary or 3-class probs | 17-18 KB each | Run through `SpecialistModelsService`. |
-| `skin_disease_model.tflite` | 128×128×3 | [1, 8] | 4.28 MB | **BELOW 70% GATE (val_acc 0.407)** — re-added 2026-04-19 despite gate failure, product decision. 8 clinical supergroups (Bacterial / Fungal / Viral / Parasitic / Inflammatory / Allergic / Neoplastic / Autoimmune). Trained from DermNet-23 via `model_training/kaggle_skin_model.py` with clinical merging. Only 2 of 8 supergroups pass per-class recall ≥0.50 (Fungal 0.60, Inflammatory 0.52); **Bacterial at 0.09 recall is effectively broken**. Stage-2 train_acc 0.92 vs val_acc 0.41 → severe overfit, not just dataset noise. `MLService.classifyImage(type: 'skin', ...)` returns the `Low confidence — confirm at PHC` sentinel when top-1 < `skinConfidenceFloor` (currently 0.55 — chosen stiff because of the overfit). See `skin_disease_model_metadata.json` for full per-supergroup numbers. **Retrain with EfficientNetB0 @ 224×224 or drop the Bacterial class before raising the floor.** |
+| `skin_disease_model.tflite` | 128×128×3 | [1, 8] | 4.28 MB | **BELOW 70% GATE (val_acc 0.407)** — re-added 2026-04-19 despite gate failure, product decision. 8 clinical supergroups (Bacterial / Fungal / Viral / Parasitic / Inflammatory / Allergic / Neoplastic / Autoimmune). Trained from DermNet-23 via `model_training/kaggle_skin_model.py` with clinical merging. Only 2 of 8 supergroups pass per-class recall ≥0.50 (Fungal 0.60, Inflammatory 0.52); **Bacterial at 0.09 recall is effectively broken**. Stage-2 train_acc 0.92 vs val_acc 0.41 → severe overfit. `MLService.classifyImage(type: 'skin', ...)` returns the `Low confidence — confirm at PHC` sentinel when top-1 < `skinConfidenceFloor` (currently 0.55); `assessment_screen.dart` + `results_screen.dart` detect this sentinel and render an amber "Preliminary — confirm at PHC" banner above the ranked list. **Preprocessing-range gotcha**: this model was trained with `mobilenet_v2.preprocess_input` baked into the graph (expects [0, 255] raw), while the Dart preprocessor produces [0, 1] to match eye/lung/malaria. `ml_service.dart` compensates with a scale-by-255 stopgap guarded by `type == 'skin'`; the Kaggle training script has now been fixed (`BACKBONE` constant, no preprocess_input, [0, 1] input) so the next retrain will drop this stopgap naturally. **Upgrade levers** (in `kaggle_skin_model.py`): set `BACKBONE = "efficientnetb0"` (auto-bumps IMG_SIZE to 224) and/or `DROP_SUPERGROUPS = {"Bacterial Infection"}`; expected val_acc lift 0.10–0.20 per lever, combine to target the 70% ship gate. |
 | `eye_disease_model.tflite` | 128×128×3 | [1, 4] | 2.6 MB | cataract / diabetic_retinopathy / glaucoma / normal |
 | `lung_disease_model.tflite` | 128×128×3 | [1, 6] | 2.6 MB | Labels contain **case-duplicates** (`NORMAL` vs `Normal`, `TURBERCULOSIS` vs `Tuberculosis`). `MLService._canonicalizeImageClass` collapses them before display |
 | `malaria_model.tflite` | 128×128×3 | [1, 2] | 2.5 MB | Parasitized / Uninfected blood smear |
@@ -175,6 +175,14 @@ with helpers `_isHighRiskLabel` / `_isMidRiskLabel` / `_isLowRiskLabel` that che
 Plus permissions: `CAMERA`, `RECORD_AUDIO`, `WRITE_EXTERNAL_STORAGE`, `READ_EXTERNAL_STORAGE`, `VIBRATE`, `INTERNET`.
 
 Without the queries block, the "Send summary to PHC" button reports "WhatsApp not available" even when installed.
+
+## Release signing (CI + local)
+
+`android/app/build.gradle.kts` reads `android/keystore.properties` if present and signs with the real upload key; otherwise it falls back to the debug keystore so `flutter run --release` works on a fresh clone. The CI workflow at [.github/workflows/build-apk.yml](.github/workflows/build-apk.yml) creates `keystore.properties` from four GitHub Secrets (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`) when they're configured, then falls through when they're not.
+
+`keystore.properties` and any `*.jks` under `android_app/android/` are gitignored — these files contain private keys and must never be committed.
+
+See [KEYSTORE_SETUP.md](KEYSTORE_SETUP.md) at the repo root for the one-time secret-generation recipe (5 minutes).
 
 ## Dart-file editing rules
 

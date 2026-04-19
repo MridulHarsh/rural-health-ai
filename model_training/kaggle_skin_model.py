@@ -32,6 +32,35 @@ DERMNET-SPECIFIC FIX — 8-GROUP CLINICAL MERGING:
 
   Toggle CLINICAL_MERGE_DERMNET=False below to run on raw 23 classes.
 
+UPGRADE LEVERS (post-hackathon retrain targeting the 70% ship gate):
+  1. BACKBONE = "efficientnetb0"
+     Swaps MobileNetV2 for EfficientNetB0 @ 224×224 (pre-trained native
+     res). More expressive, ~1.5x training time, ~1 MB larger TFLite.
+     Expected val_acc lift on DermNet-8: +0.10 to +0.20.
+
+  2. DROP_SUPERGROUPS = {"Bacterial Infection"}
+     The Apr 2026 run had Bacterial at 0.09 recall — actively
+     dangerous to keep in production. Dropping it before training
+     frees the model to put its capacity into the remaining 7
+     supergroups, which typically lifts their individual recalls by
+     5–10% because the "noise class" stops absorbing gradient.
+
+  3. If BACKBONE is changed, the Dart preprocessing in
+     assessment_screen.dart must resize images to the new IMG_SIZE.
+     At 224×224 the preprocessing block there becomes:
+         img.copyResize(decoded, width: 224, height: 224)
+     Update ml_service.dart's comment too.
+
+INPUT-RANGE CONVENTION:
+  This script feeds [0, 1] float pixels into the network (no
+  preprocess_input). That matches model_training/train_images.py's
+  convention, which in turn matches the Dart caller's
+  _preprocessImage at android_app/lib/screens/assessment_screen.dart.
+  Previous builds used mobilenet_v2.preprocess_input which expected
+  [0, 255] — a mismatch that required a stopgap scale-by-255 in
+  ml_service.dart. Dropping that stopgap is pending a retrain with
+  this script.
+
 OUTPUT (downloadable from the notebook's "Output" panel after run):
   • skin_disease_model.tflite              (~2.5 MB, float16-quantized)
   • skin_disease_model_classes.json        (class labels in JSON array)
@@ -54,18 +83,37 @@ from sklearn.metrics import classification_report
 # CONFIG
 # ═══════════════════════════════════════════════════════════════════════
 
-IMG_SIZE = 128                # matches eye/lung/malaria siblings in android app
+# ─── Backbone ─────────────────────────────────────────────────────
+# "mobilenetv2" is the default and matches the other siblings. Switch
+# to "efficientnetb0" for the post-hackathon upgrade attempt — more
+# expressive backbone at the cost of ~1.5x training time and ~1 MB
+# larger TFLite output.
+BACKBONE = "mobilenetv2"      # one of: "mobilenetv2", "efficientnetb0"
+
+# MobileNetV2 was pre-trained on 128×128 and the eye/lung/malaria
+# siblings use 128. EfficientNetB0 is pre-trained on 224×224 and its
+# feature extractor is much weaker at 128 — bump IMG_SIZE when using
+# it. Dart callers must resize to match.
+IMG_SIZE = 224 if BACKBONE == "efficientnetb0" else 128
+
 BATCH_SIZE = 32
 EPOCHS_HEAD = 12              # stage 1: frozen backbone, train head only
-EPOCHS_FINE = 15              # stage 2: unfreeze top of MobileNetV2
+EPOCHS_FINE = 15              # stage 2: unfreeze top N layers
 UNFREEZE_LAYERS = 30          # how many top layers to fine-tune in stage 2
-FINE_TUNE_LR = 3e-5           # stage 2 learning rate (slightly above 1e-5 works
-                              # better when the problem is well-sized)
+FINE_TUNE_LR = 3e-5           # stage 2 learning rate
 SEED = 42
 VAL_SPLIT = 0.2
 MIN_VAL_ACC = 0.70            # CLAUDE.md hard gate
 MIN_PER_CLASS_RECALL = 0.50   # no confident-wrong class allowed
 USE_CLASS_WEIGHTS = True      # essential for imbalanced datasets
+
+# ─── Drop broken classes (post-hoc class reduction) ───────────────
+# The Apr 2026 DermNet run had Bacterial Infection at 0.09 recall —
+# essentially non-functional, and worse than useless in the field
+# because it contaminates the other supergroups with false negatives.
+# Add class names here to drop them entirely before training; the
+# remaining supergroups get the full training budget.
+DROP_SUPERGROUPS = set()      # e.g. {"Bacterial Infection"}
 
 # Safety guard: if stage 2 fine-tuning makes val_acc *worse* than stage 1
 # ended at, revert to stage 1 weights. (Prior DermNet runs saw stage 2
@@ -343,6 +391,46 @@ else:
           f"(detected {dermnet_match_count}/23 DermNet classes; "
           f"CLINICAL_MERGE_DERMNET={CLINICAL_MERGE_DERMNET}).")
 
+# ─── Drop-broken-supergroup filter ────────────────────────────────────
+# Apply AFTER clinical merging so we can drop e.g. "Bacterial Infection"
+# by name. Filters the datasets to exclude images whose remapped label
+# hits a dropped supergroup, and rewrites class_names + remap_tensor so
+# the softmax head only emits kept classes.
+if DROP_SUPERGROUPS:
+    keep_mask = [c not in DROP_SUPERGROUPS for c in class_names]
+    kept_classes = [c for c, k in zip(class_names, keep_mask) if k]
+    dropped = [c for c in class_names if not keep_mask[class_names.index(c)]]
+    if dropped:
+        print(f"\n🗑  Dropping supergroups: {dropped}")
+    old_to_new = {}
+    for old_idx, cls in enumerate(class_names):
+        if cls in kept_classes:
+            old_to_new[old_idx] = kept_classes.index(cls)
+
+    def _filter_and_relabel(x, y):
+        keep = tf.reduce_any(
+            tf.stack([tf.equal(y, k) for k in old_to_new.keys()]),
+            axis=0,
+        )
+        x, y = tf.boolean_mask(x, keep), tf.boolean_mask(y, keep)
+        lookup_keys = tf.constant(list(old_to_new.keys()), dtype=y.dtype)
+        lookup_vals = tf.constant(list(old_to_new.values()), dtype=y.dtype)
+        # argmax trick: find index of y in lookup_keys, pick matching val
+        match = tf.argmax(
+            tf.cast(tf.equal(y[:, None], lookup_keys[None, :]), tf.int32),
+            axis=1,
+        )
+        return x, tf.gather(lookup_vals, match)
+
+    train_ds_raw = train_ds_raw.unbatch().batch(BATCH_SIZE).map(
+        _filter_and_relabel, num_parallel_calls=tf.data.AUTOTUNE
+    )
+    val_ds_raw = val_ds_raw.unbatch().batch(BATCH_SIZE).map(
+        _filter_and_relabel, num_parallel_calls=tf.data.AUTOTUNE
+    )
+    class_names = kept_classes
+    print(f"   {len(class_names)} classes remain after drop: {class_names}")
+
 num_classes = len(class_names)
 print(f"\n📊 Classes ({num_classes}):")
 for i, c in enumerate(class_names):
@@ -399,24 +487,52 @@ train_ds = (
 val_ds = val_ds_raw.cache().prefetch(AUTOTUNE)
 
 # ═══════════════════════════════════════════════════════════════════════
-# MODEL — MobileNetV2 transfer learning (matches eye/lung/malaria)
+# MODEL — transfer learning, backbone chosen by BACKBONE constant
 # ═══════════════════════════════════════════════════════════════════════
+#
+# Input-range convention: match the existing eye/lung/malaria pipeline
+# which feeds [0, 1] normalized floats (train_images.py line 169 does
+# `np.array(img, dtype=np.float32) / 255.0`; assessment_screen.dart
+# _preprocessImage does `pixel.r / 255.0`). We do NOT apply the
+# backbone's preprocess_input because that expects [0, 255] raw and
+# would mismatch the Dart caller.
+#
+# Imagenet weights were trained on mean-subtracted pixels, so feeding
+# raw [0, 1] is slightly off-distribution. Fine-tuning absorbs the
+# shift, and this is what the sibling models already do — swapping
+# conventions just for skin would break the Dart code or require a
+# stopgap multiplication there, which is what the previous build had.
 
-base = applications.MobileNetV2(
-    input_shape=(IMG_SIZE, IMG_SIZE, 3),
-    include_top=False,
-    weights="imagenet",
-)
+if BACKBONE == "mobilenetv2":
+    base = applications.MobileNetV2(
+        input_shape=(IMG_SIZE, IMG_SIZE, 3),
+        include_top=False,
+        weights="imagenet",
+    )
+elif BACKBONE == "efficientnetb0":
+    base = applications.EfficientNetB0(
+        input_shape=(IMG_SIZE, IMG_SIZE, 3),
+        include_top=False,
+        weights="imagenet",
+    )
+else:
+    raise ValueError(f"Unknown BACKBONE: {BACKBONE!r}")
 base.trainable = False
 
 inp = layers.Input(shape=(IMG_SIZE, IMG_SIZE, 3))
-x = applications.mobilenet_v2.preprocess_input(inp)
-x = base(x, training=False)
+# NO preprocess_input — the Dart caller feeds [0, 1] normalized floats.
+x = base(inp, training=False)
 x = layers.GlobalAveragePooling2D()(x)
-x = layers.Dropout(0.25)(x)
+# EfficientNetB0 benefits from a bit more dropout than MobileNetV2 on
+# small fine-grained datasets — the backbone is more expressive and
+# overfits faster.
+dropout_rate = 0.40 if BACKBONE == "efficientnetb0" else 0.25
+x = layers.Dropout(dropout_rate)(x)
 out = layers.Dense(num_classes, activation="softmax", dtype="float32")(x)
 
 model = models.Model(inp, out)
+print(f"   Backbone: {BACKBONE}  |  input: {IMG_SIZE}×{IMG_SIZE}×3 in [0, 1]")
+print(f"   Dropout: {dropout_rate}  |  softmax head: {num_classes} classes")
 model.compile(
     optimizer=tf.keras.optimizers.Adam(1e-3),
     loss="sparse_categorical_crossentropy",
@@ -546,10 +662,13 @@ print(f"   {classes_path}")
 
 meta_path = OUTPUT_DIR / "skin_disease_model_metadata.json"
 meta_path.write_text(json.dumps({
-    "model": "MobileNetV2 (imagenet transfer, top-30 fine-tuned)",
+    "model": f"{BACKBONE} (imagenet transfer, top-{UNFREEZE_LAYERS} fine-tuned)",
+    "backbone": BACKBONE,
     "img_size": IMG_SIZE,
     "input_shape": [IMG_SIZE, IMG_SIZE, 3],
-    "input_normalization": "mobilenet_v2.preprocess_input (scales to [-1, 1])",
+    "input_normalization": "[0, 1] raw — img / 255.0 — matches train_images.py",
+    "dropout_rate": dropout_rate,
+    "dropped_supergroups": sorted(DROP_SUPERGROUPS),
     "num_classes": num_classes,
     "classes": class_names,
     "val_accuracy": float(val_acc),
