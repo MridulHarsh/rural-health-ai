@@ -368,7 +368,9 @@ class _ResultsScreenState extends State<ResultsScreen> {
                   backgroundColor: const Color(0xFFFECACA),
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
+                  labelPadding: EdgeInsets.zero,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
                 );
               }).toList(),
             ),
@@ -422,7 +424,9 @@ class _ResultsScreenState extends State<ResultsScreen> {
                       style: const TextStyle(fontSize: 11)),
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
+                  labelPadding: EdgeInsets.zero,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
                 );
               }).toList(),
             ),
