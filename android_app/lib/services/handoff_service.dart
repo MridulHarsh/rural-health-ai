@@ -8,6 +8,19 @@ import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class HandoffService {
+  /// Normalize a user-supplied phone number to digits-only. Returns null if
+  /// the result is empty or clearly not a dialable number (too short/long).
+  /// Indian mobile numbers are 10 digits; with country code they're 12. We
+  /// accept 7–15 digits to be permissive across regions while rejecting
+  /// obvious garbage ("hello", "n/a") before it reaches launchUrl and
+  /// confuses downstream apps.
+  static String? _sanitizePhone(String? raw) {
+    if (raw == null) return null;
+    final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length < 7 || digits.length > 15) return null;
+    return digits;
+  }
+
   /// Share a patient summary to a PHC doctor via WhatsApp. Tries the WhatsApp
   /// app scheme first (opens the app directly), then falls back to wa.me URL
   /// which works even without the app installed (opens in browser).
@@ -17,7 +30,7 @@ class HandoffService {
     String? filePath,
   }) async {
     final encoded = Uri.encodeComponent(message);
-    final num = phone?.replaceAll(RegExp(r'[^0-9]'), '') ?? '';
+    final num = _sanitizePhone(phone) ?? '';
 
     // 1. Try native WhatsApp scheme (opens app directly on Android/iOS).
     final nativeUrl = num.isEmpty
@@ -36,7 +49,7 @@ class HandoffService {
   /// Used by the red-flag auto-SMS draft — ASHA taps once to send.
   static Future<bool> draftSms({required String message, String? phone}) async {
     final encoded = Uri.encodeComponent(message);
-    final num = phone ?? '';
+    final num = _sanitizePhone(phone) ?? '';
     final url = Platform.isIOS
         ? 'sms:$num&body=$encoded'
         : 'sms:$num?body=$encoded';
@@ -45,7 +58,9 @@ class HandoffService {
 
   /// Dial an emergency number (108 for ambulance in India).
   static Future<bool> dial(String phone) async {
-    return _tryLaunch('tel:$phone');
+    final num = _sanitizePhone(phone);
+    if (num == null) return false;
+    return _tryLaunch('tel:$num');
   }
 
   /// Attempt to launch [url] with [LaunchMode.externalApplication]. By

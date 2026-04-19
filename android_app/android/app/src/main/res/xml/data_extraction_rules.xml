@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Data extraction rules for the rural health AI app.
+
+  Goal: when Android 12+ D2D transfer or cloud backup fires, refuse to
+  include *anything* from this app. The SQLite holds PII (patient names,
+  voice transcripts, notes) that is AES-GCM encrypted at rest, but the
+  encryption key lives in Android Keystore on the source device and is
+  not portable — a backup of only the ciphertext would be both useless
+  to the legitimate user and a static target for offline attack.
+
+  If we ever ship a verified export/import flow, change these rules to
+  allow specific entries (never a blanket <include/>).
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>

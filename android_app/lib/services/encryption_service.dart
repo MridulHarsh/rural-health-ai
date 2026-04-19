@@ -11,6 +11,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:encrypt/encrypt.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class EncryptionService {
@@ -65,7 +66,15 @@ class EncryptionService {
       final iv = IV.fromBase64(parts[0]);
       final ct = Encrypted.fromBase64(parts[1]);
       return _encrypter!.decrypt(ct, iv: iv);
-    } catch (_) {
+    } catch (e) {
+      // Log the error *type* (never the envelope contents) so a developer
+      // looking at adb logcat can distinguish "key was rotated and old rows
+      // are stale" from "envelope is base64-corrupt" — both manifest as a
+      // silent fallback to raw envelope, which historically made these
+      // failures undiagnosable. The error type from the `encrypt` package
+      // (FormatException, ArgumentError) is enough signal without leaking
+      // ciphertext to logs.
+      debugPrint('[EncryptionService] decrypt failed (${e.runtimeType})');
       return envelope; // Decryption failed — return as-is rather than crash
     }
   }

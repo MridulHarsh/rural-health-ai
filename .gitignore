@@ -55,10 +55,21 @@ env/
 **/android/**/GeneratedPluginRegistrant.java
 
 # ── Android signing (never commit keystores or passwords) ──
-**/android/keystore.properties
-**/android/app/*.jks
-**/android/app/*.keystore
+# Broad match so a keystore placed anywhere under android/ — at the root or
+# inside app/ or a custom module — is always caught.
+**/android/**/keystore.properties
+**/android/**/*.jks
+**/android/**/*.keystore
 **/*-keystore.jks
+**/*.p12
+**/*.pfx
+
+# ── Ad-hoc files dropped into working folders (e.g. reference PDFs
+#    pasted into presentation/ during deck iteration) ──
+presentation/*.pdf
+presentation/*.docx
+presentation/*.key
+presentation/*.pptx
 
 # ── Model training: large artifacts that can be regenerated ──
 # Deployment-ready TFLite/.json assets under android_app/assets/models/ ARE tracked.

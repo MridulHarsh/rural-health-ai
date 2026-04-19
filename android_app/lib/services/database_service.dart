@@ -102,8 +102,7 @@ class DatabaseService {
       return {
         'id': row['id'],
         'householdId': row['household_id'],
-        'patientName':
-            EncryptionService.decryptString(row['patient_name'] as String?),
+        'patientName': _safeDecrypt(row['patient_name'] as String?),
         'patientAge': row['patient_age'],
         'patientGender': row['patient_gender'],
         'symptoms': _safeDecode(row['symptoms'], fallback: const []),
@@ -112,12 +111,25 @@ class DatabaseService {
         'overallRisk': row['overall_risk'],
         'nextSteps': _safeDecode(row['next_steps'], fallback: const []),
         'imagePath': row['image_path'],
-        'voiceTranscript': EncryptionService.decryptString(
-            row['voice_transcript'] as String?),
-        'notes': EncryptionService.decryptString(row['notes'] as String?),
+        'voiceTranscript': _safeDecrypt(row['voice_transcript'] as String?),
+        'notes': _safeDecrypt(row['notes'] as String?),
         'createdAt': row['created_at'],
       };
     }).toList();
+  }
+
+  /// Decrypt a PII column. If the stored envelope is corrupt (or was written
+  /// by an earlier keystore that got wiped), return null instead of crashing
+  /// the entire history retrieval — matches the _safeDecode resilience pattern
+  /// we already apply to JSON columns. Partial patient records beat an app
+  /// that refuses to load any history.
+  static String? _safeDecrypt(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return EncryptionService.decryptString(raw);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Get all assessments for a given household (for family/clustered view).
