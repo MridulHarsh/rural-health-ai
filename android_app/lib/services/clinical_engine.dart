@@ -586,10 +586,21 @@ class ClinicalEngine {
     // But DO upgrade if patient is vulnerable (very young, very old)
     ClinicalRisk risk = baseRisk;
 
-    // Age-based escalation
+    // Age-based escalation. Very young children and the elderly decompensate
+    // fast, so we upgrade risk more aggressively for them. Previous threshold
+    // of `cardinalCoverage > 0.6` left a dangerous gap: a feverish <5yo with
+    // poor perfusion and tachycardia would score ~0.3 cardinal coverage on
+    // the curated profiles (no dedicated sepsis profile exists), bypass the
+    // 11 red-flag rules because none of them require exactly
+    // "fever + poor perfusion", and land in "moderate" instead of "urgent"
+    // — a septic child would look like a casual visit to an ASHA.
+    //
+    // Lowering to 0.3 closes that gap while still requiring at least one
+    // cardinal-level symptom to match. Normal→moderate unconditional upgrade
+    // is unchanged.
     if (age != null && (age < 5 || age > 65)) {
       if (risk == ClinicalRisk.normal) risk = ClinicalRisk.moderate;
-      if (risk == ClinicalRisk.moderate && cardinalCoverage > 0.6) {
+      if (risk == ClinicalRisk.moderate && cardinalCoverage > 0.3) {
         risk = ClinicalRisk.urgent;
       }
     }

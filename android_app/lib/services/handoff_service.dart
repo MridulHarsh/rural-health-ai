@@ -8,15 +8,28 @@ import 'package:flutter/foundation.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class HandoffService {
+  /// Short-code emergency numbers that must ALWAYS be dialable, regardless
+  /// of the 7-digit minimum below. India uses 108 (ambulance), 102 (medical),
+  /// 112 (unified), 100 (police), 101 (fire), 104 (state health helplines),
+  /// 1098 (child helpline). Without this allowlist, the default 7-15-digit
+  /// sanitizer would silently reject `dial('108')` — a patient-safety
+  /// regression caught in the second audit round.
+  static const Set<String> _emergencyShortCodes = {
+    '100', '101', '102', '104', '108', '112', '1098',
+  };
+
   /// Normalize a user-supplied phone number to digits-only. Returns null if
   /// the result is empty or clearly not a dialable number (too short/long).
   /// Indian mobile numbers are 10 digits; with country code they're 12. We
   /// accept 7–15 digits to be permissive across regions while rejecting
   /// obvious garbage ("hello", "n/a") before it reaches launchUrl and
-  /// confuses downstream apps.
+  /// confuses downstream apps. Emergency short codes bypass the length
+  /// minimum via [_emergencyShortCodes].
   static String? _sanitizePhone(String? raw) {
     if (raw == null) return null;
     final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) return null;
+    if (_emergencyShortCodes.contains(digits)) return digits;
     if (digits.length < 7 || digits.length > 15) return null;
     return digits;
   }

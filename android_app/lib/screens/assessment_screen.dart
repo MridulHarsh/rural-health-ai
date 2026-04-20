@@ -614,8 +614,8 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
     final meds = OcrService.extractMedicineLines(result);
     final rawText = result.rawText;
     final summary = meds.isNotEmpty
-        ? 'Scanned Rx:\n${meds.join('\n')}'
-        : 'Scanned text:\n${rawText.substring(0, rawText.length.clamp(0, 400))}';
+        ? '${_t('ocr_scanned_rx')}\n${meds.join('\n')}'
+        : '${_t('ocr_scanned_text')}\n${rawText.substring(0, rawText.length.clamp(0, 400))}';
 
     setState(() {
       final existing = _notesController.text.trim();
@@ -626,8 +626,8 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(
         meds.isNotEmpty
-            ? 'Detected ${meds.length} medicine line(s)'
-            : 'Text captured to notes',
+            ? '${meds.length} ${_t('ocr_medicine_lines_detected')}'
+            : _t('ocr_captured_to_notes'),
       )),
     );
   }
@@ -1279,19 +1279,29 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
               child: DropdownButton<String>(
                 value: _imageType,
                 isExpanded: true,
-                items: const [
+                items: [
                   // Skin listed first — most-common image-triage use case
                   // on a phone camera. \u{1FA79} is the adhesive-bandage
                   // emoji which renders predictably across Android emoji
                   // sets (the previous ✋ raised-hand was ambiguous and
                   // rendered as a tofu box on some older devices).
-                  DropdownMenuItem(value: 'skin', child: Text('\u{1FA79} Skin Photo — Rash, Lesion, Infection')),
-                  DropdownMenuItem(value: 'eye', child: Text('\u{1F441} Eye Photo — Cataract, Glaucoma, DR')),
-                  DropdownMenuItem(value: 'lung', child: Text('\u{1FA7B} Chest X-ray — Pneumonia, TB, COVID')),
-                  DropdownMenuItem(value: 'malaria', child: Text('\u{1FA78} Blood Smear — Malaria Parasite')),
+                  DropdownMenuItem(value: 'skin', child: Text('\u{1FA79} ${_t('img_type_skin')}')),
+                  DropdownMenuItem(value: 'eye', child: Text('\u{1F441} ${_t('img_type_eye')}')),
+                  DropdownMenuItem(value: 'lung', child: Text('\u{1FA7B} ${_t('img_type_lung')}')),
+                  DropdownMenuItem(value: 'malaria', child: Text('\u{1FA78} ${_t('img_type_malaria')}')),
                 ],
                 onChanged: (val) {
-                  if (val != null) setState(() => _imageType = val);
+                  if (val == null || val == _imageType) return;
+                  // Clear stale classification + captured image when the
+                  // user switches types. Without this, the previous type's
+                  // ranked results stay rendered under the new type's
+                  // label ("Malaria Smear Analysis" with skin probs, etc.)
+                  // — a correctness bug caught in the second audit round.
+                  setState(() {
+                    _imageType = val;
+                    _imageResults = null;
+                    _capturedImage = null;
+                  });
                 },
               ),
             ),
