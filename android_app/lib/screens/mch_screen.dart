@@ -761,19 +761,29 @@ class _AncSheetState extends State<_AncSheet> {
           const SizedBox(height: 12),
           TextField(
               controller: _name,
-              decoration:
-                  const InputDecoration(labelText: 'Mother\'s name')),
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Mother\'s name *',
+              )),
           const SizedBox(height: 8),
           TextField(
               controller: _age,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Age (years)')),
+              decoration: const InputDecoration(
+                labelText: 'Age (years)',
+              )),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             icon: const Icon(Icons.calendar_today),
             label: Text(_lmp == null
-                ? 'Pick last menstrual period (LMP)'
+                ? 'Pick last menstrual period (LMP) *'
                 : 'LMP: ${_fmt(_lmp!)} — EDD ${_fmt(MchService.eddFromLmp(_lmp!))}'),
+            style: _lmp == null
+                ? OutlinedButton.styleFrom(
+                    side: BorderSide(
+                        color: Theme.of(context).colorScheme.primary),
+                  )
+                : null,
             onPressed: () async {
               final picked = await showDatePicker(
                 context: context,
@@ -785,17 +795,34 @@ class _AncSheetState extends State<_AncSheet> {
             },
           ),
           const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: () {
-              if (_name.text.trim().isEmpty || _lmp == null) return;
-              Navigator.pop(context, {
-                'name': _name.text.trim(),
-                'age': int.tryParse(_age.text),
-                'lmp': _lmp,
-              });
-            },
-            child: const Text('Create 4-visit schedule'),
-          ),
+          Builder(builder: (context) {
+            final canSubmit = _name.text.trim().isNotEmpty && _lmp != null;
+            return ElevatedButton(
+              onPressed: canSubmit
+                  ? () {
+                      Navigator.pop(context, {
+                        'name': _name.text.trim(),
+                        'age': int.tryParse(_age.text),
+                        'lmp': _lmp,
+                      });
+                    }
+                  : null,
+              child: const Text('Create 4-visit schedule'),
+            );
+          }),
+          if (_name.text.trim().isEmpty || _lmp == null) ...[
+            const SizedBox(height: 6),
+            Text(
+              _name.text.trim().isEmpty && _lmp == null
+                  ? 'Enter the mother\'s name and pick LMP date to continue.'
+                  : _name.text.trim().isEmpty
+                      ? 'Enter the mother\'s name to continue.'
+                      : 'Pick the LMP date to continue.',
+              style: TextStyle(
+                  fontSize: 12, color: Theme.of(context).colorScheme.primary),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ],
       ),
     );
@@ -836,13 +863,24 @@ class _ImmunizationSheetState extends State<_ImmunizationSheet> {
           const SizedBox(height: 12),
           TextField(
               controller: _name,
-              decoration: const InputDecoration(labelText: 'Child\'s name')),
+              // onChanged triggers rebuild so the submit button's
+              // enabled/disabled state reflects the latest text.
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Child\'s name *',
+              )),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             icon: const Icon(Icons.calendar_today),
             label: Text(_dob == null
-                ? 'Pick date of birth'
+                ? 'Pick date of birth *'
                 : 'DOB: ${_fmt(_dob!)}'),
+            style: _dob == null
+                ? OutlinedButton.styleFrom(
+                    side: BorderSide(
+                        color: Theme.of(context).colorScheme.primary),
+                  )
+                : null,
             onPressed: () async {
               final picked = await showDatePicker(
                 context: context,
@@ -854,16 +892,37 @@ class _ImmunizationSheetState extends State<_ImmunizationSheet> {
             },
           ),
           const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: () {
-              if (_name.text.trim().isEmpty || _dob == null) return;
-              Navigator.pop(context, {
-                'name': _name.text.trim(),
-                'dob': _dob,
-              });
-            },
-            child: const Text('Create UIP schedule'),
-          ),
+          Builder(builder: (context) {
+            final canSubmit = _name.text.trim().isNotEmpty && _dob != null;
+            return ElevatedButton(
+              // Null onPressed makes Flutter render the button as disabled
+              // (greyed out + not tappable), which is why an empty form
+              // used to look broken — the button was enabled but silently
+              // no-op'd. Now the disabled state is obvious at a glance.
+              onPressed: canSubmit
+                  ? () {
+                      Navigator.pop(context, {
+                        'name': _name.text.trim(),
+                        'dob': _dob,
+                      });
+                    }
+                  : null,
+              child: const Text('Create UIP schedule'),
+            );
+          }),
+          if (_name.text.trim().isEmpty || _dob == null) ...[
+            const SizedBox(height: 6),
+            Text(
+              _name.text.trim().isEmpty && _dob == null
+                  ? 'Enter the child\'s name and pick date of birth to continue.'
+                  : _name.text.trim().isEmpty
+                      ? 'Enter the child\'s name to continue.'
+                      : 'Pick the date of birth to continue.',
+              style: TextStyle(
+                  fontSize: 12, color: Theme.of(context).colorScheme.primary),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ],
       ),
     );
