@@ -10,22 +10,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 rural_health_ai/
-├── android_app/           # Flutter app (the uploaded artifact)
+├── android_app/                          # Flutter app (the uploaded artifact)
 │   ├── lib/
-│   │   ├── app.dart, main.dart
-│   │   ├── models/patient.dart          # Patient, Vitals, AssessmentResult, RiskLevel
-│   │   ├── services/                    # See "Service layer" below
-│   │   ├── screens/                     # Home, Assessment (4-step), Results, History, Settings, Inventory, MCH, Dosage
-│   │   └── l10n/translations.dart       # 12 Indian languages
-│   ├── assets/models/                   # Bundled TFLite + JSON class/feature files
-│   └── android/app/src/main/AndroidManifest.xml   # <queries> block is load-bearing
-├── model_training/                      # Python training pipelines (run on dev machine, outputs go to android_app/assets/models/)
-│   ├── train_all.py, train_tabular.py, train_images.py, export_tflite.py
-│   └── output_v2/                       # GITIGNORED — multi-GB joblib pickles
+│   │   ├── app.dart, main.dart           # GoogleFonts.allowRuntimeFetching=false
+│   │   ├── models/patient.dart           # Patient, Vitals, AssessmentResult, RiskLevel
+│   │   ├── services/                     # See "Service layer" below
+│   │   ├── screens/                      # Home, Assessment (4-step), Results, History,
+│   │   │                                 # Settings, Inventory, MCH, Dosage
+│   │   └── l10n/translations.dart        # 12 languages, 296 keys each (100% coverage)
+│   ├── assets/models/                    # Bundled TFLite + JSON class/feature files
+│   └── android/
+│       ├── app/build.gradle.kts          # Release signing + R8/ProGuard config
+│       ├── app/proguard-rules.pro        # -keep rules for reflection plugins
+│       └── app/src/main/
+│           ├── AndroidManifest.xml       # <queries> block + allowBackup=false
+│           └── res/xml/data_extraction_rules.xml   # Blocks cloud-backup + D2D
+├── model_training/                       # Python training pipelines (run locally; outputs
+│   │                                     # go to android_app/assets/models/)
+│   ├── train_all.py, train_tabular.py,
+│   │   train_images.py, export_tflite.py
+│   ├── kaggle_skin_model.py              # Paste-into-Kaggle cell for the skin retrain
+│   ├── KAGGLE_SKIN_TRAINING.md           # Walk-through for the Kaggle run
+│   └── output_v2/                        # GITIGNORED — multi-GB joblib pickles
+├── presentation/                         # Hackathon deck brief + Claude Design prompt
+├── .github/workflows/build-apk.yml       # CI: builds signed APK on every push/PR
+├── CLAUDE.md                             # You are here
+├── KEYSTORE_SETUP.md                     # 5-min release-signing walkthrough
 └── README.md, setup.sh
 ```
 
-Both subdirs are independently buildable. The Flutter app doesn't call Python at runtime; it just consumes the `.tflite` / `.json` artifacts that training produces.
+Both `android_app/` and `model_training/` are independently buildable. The Flutter app doesn't call Python at runtime; it just consumes the `.tflite` / `.json` artifacts that training produces.
 
 ## Environment
 
@@ -231,7 +245,6 @@ Translations use community-spoken vocabulary, not Sanskritic/academic medical te
 - **On-device LLM (Gemma, MedGemma, Llama, InfiMed)** — considered during competitor analysis, deliberately skipped. 100-500 MB model size blows up the APK, licensing is thorny, and the curated 162-disease engine is more auditable than an LLM.
 - **BLE mesh P2P sync, rPPG vitals from camera, cough-audio (YAMNet) classification** — all competitor features we chose to skip as out of scope. Don't add without explicit approval.
 - ~~**Skin image model** — 32% accuracy, permanently removed.~~ **RE-ADDED 2026-04-19** as a below-gate model (see bundled-models table). DermNet-23 retrained into 8 clinical supergroups via `model_training/kaggle_skin_model.py`. Still below the 70% ship gate — kept behind a `skinConfidenceFloor` guard in `ml_service.dart` that degrades low-confidence predictions to a PHC-referral sentinel. **Raise the floor or retrain before broadening UI surface area.**
-- **CLEAR-phase trading logic / v24 parameters** — that's the IMC Prosperity project, not this one. Ignore any CLAUDE.md fragments that mention `OSM`, `ASH_COATED_OSMIUM`, `submission_v*.py`, etc.
 
 ## Database schema (SQLite, version 2)
 
