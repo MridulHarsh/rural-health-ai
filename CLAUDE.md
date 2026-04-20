@@ -31,7 +31,7 @@ Both subdirs are independently buildable. The Flutter app doesn't call Python at
 
 | Piece | Location | Notes |
 |---|---|---|
-| Flutter SDK | `~/development/flutter/` | **NOT on PATH.** Invoke as `~/development/flutter/bin/flutter ...` |
+| Flutter SDK | `~/development/flutter/` (3.41.6 stable) | **NOT on PATH.** Invoke as `~/development/flutter/bin/flutter ...`. CI pins the same version — earlier pins failed the `intl ^0.20.2` pubspec solver. |
 | Conda env | `rural_health` (Python 3.11) | **Always** `conda activate rural_health` before training. The base env has a broken tensorflow-metal that segfaults. |
 | Android SDK | `~/Library/Android/sdk` | |
 | Dev machine | MacBook Air M2 (8 GB) | |
@@ -103,7 +103,9 @@ This is the most important architectural invariant in the app. A symptom selecte
 - **Cardinal elimination**: if a disease has cardinal symptoms but NONE match the patient's, score = 0. Implemented in `clinical_engine.dart` around the `_scoreCandidate` method. This is why every `DiseaseProfile` must have ≥1 cardinal.
 - **Scoring weights** (tuned empirically): Cardinal 50%, Common 20%, Prevalence 15%, Explanation 10%, Occasional 5%.
 - **Risk calibration**: 2 mild symptoms (e.g. fever + cough) should never produce `ClinicalRisk.emergency`. Red flags produce emergency — disease scoring alone does not.
-- **Fever expansion**: the engine auto-adds `fever`/`mild_fever` when any fever variant is present. Also injects `fever`/`high_fever` from vitals when temperature ≥ 100.4°F / ≥ 104°F. If the user wants to report fever without a thermometer reading, there ARE chips (`fever`, `high_fever`, `mild_fever`) in the General category — do not "fix" this by removing them.
+- **Age-based escalation** (`clinical_engine.dart` ~L590): patients with `age < 5 || age > 65` get `normal → moderate` unconditionally and `moderate → urgent` when `cardinalCoverage > 0.3`. The threshold is deliberately permissive (was 0.6, lowered to 0.3 in the round-2 audit) to catch septic young children who score low on curated profiles — there's no dedicated sepsis profile, so the age-based escalation is the safety net. A future pass should add a `RedFlagRule` keyed on `fever + tachycardia + poor_perfusion` to close this properly.
+- **Fever expansion**: the engine auto-adds `fever`/`mild_fever` when any fever variant is present. Also injects `fever`/`high_fever` from vitals when temperature ≥ 100.4°F / ≥ 104°F. If the user wants to report fever without a thermometer reading, there ARE chips (`fever`, `high_fever`, `mild_fever`) in the General category — do not "fix" this by removing them. **All temperature thresholds in this codebase are Fahrenheit** — if a Celsius input path is ever added, auto-convert before the fever check.
+- **Pediatric dosing daily cap** (`dosage_screen.dart` `_DrugRule.dose()`): every rule has both `maxMgPerDose` AND `maxMgPerDay`. The compute path clamps by per-dose first, then reduces the dose if `mg * dosesPerDay > maxMgPerDay`. Paracetamol is set to 3000 mg/day (WHO/NICE pediatric cap — prevents hepatotoxicity on the 4-dose 3-day course for 35+ kg children). Never add a new drug rule without setting both caps.
 
 ### Service layer (lib/services/)
 
@@ -112,11 +114,11 @@ This is the most important architectural invariant in the app. A symptom selecte
 | `clinical_knowledge.dart` | Data: 162 `DiseaseProfile`s, 11 `RedFlagRule`s, 295 `symptomSystemMap` keys, 642 `symptomAliases` pairs |
 | `clinical_engine.dart` | 5-step diagnostic pipeline. `_normalizeSymptoms` does alias-chain resolution + fuzzy match |
 | `ml_service.dart` | Orchestrates ClinicalEngine + tabular ML + image classification. Class is `MLService` (uppercase). |
-| `specialist_models.dart` | Singleton loading 6 tabular TFLite models. `buildFromVitals()` maps patient vitals into each model's feature space. Risk scoring is **label-aware** (see note below) |
+| `specialist_models.dart` | Singleton loading 6 tabular TFLite models. `buildFromVitals()` maps patient vitals into each model's feature space. Risk scoring is **label-aware** (see note below). `SpecialistScreening` has a required `featureCoverage` field (0.0–1.0) reporting how many of the model's expected features were actually present — UI should de-weight risk when < 0.7, since missing features silently zero-fill and bias predictions toward "normal". |
 | `fuzzy_symptom_matcher.dart` | Voice-input matcher: substring + Levenshtein (30% threshold, max edit distance 3), flattens alias chains at lookup-table build time |
-| `database_service.dart` | SQLite (schema v2). PII columns (`patient_name`, `voice_transcript`, `notes`) are AES-GCM encrypted via `EncryptionService`. `household_id` groups family members for contagion view |
+| `database_service.dart` | SQLite (schema v2). PII columns (`patient_name`, `voice_transcript`, `notes`) are AES-GCM encrypted via `EncryptionService`. `household_id` groups family members for contagion view. **All PII reads go through `_safeDecrypt`** (try/catch wrapper) — a single corrupt envelope must not crash the entire history retrieval; same resilience pattern as `_safeDecode` for JSON columns. |
 | `encryption_service.dart` | AES-256-GCM. Key stored in `flutter_secure_storage` (Android Keystore / iOS Keychain). `encryptString` / `decryptString` produce/consume `iv_b64|ct_b64` envelopes |
-| `handoff_service.dart` | WhatsApp (native scheme then wa.me fallback), SMS draft, tel dialer. **Do NOT use `canLaunchUrl` pre-check** — Android 11+ returns false for undeclared packages even when installed |
+| `handoff_service.dart` | WhatsApp (native scheme then wa.me fallback), SMS draft, tel dialer. **Do NOT use `canLaunchUrl` pre-check** — Android 11+ returns false for undeclared packages even when installed. `_sanitizePhone` rejects garbage input outside 7–15 digits, but `_emergencyShortCodes` (100/101/102/104/108/112/1098) bypass the length minimum — never remove that allowlist or `dial('108')` silently returns false. |
 | `emergency_service.dart` | Vibration-pattern alarm on red-flag triage |
 | `outbreak_detector.dart` | 7-day cluster scan over saved assessments; flags repeated top-condition or high-signal symptoms |
 | `ocr_service.dart` | Google ML Kit offline text recognition for scanning prescriptions |
@@ -166,23 +168,53 @@ risk = P(high-risk-labels) + 0.5 · P(mid-risk-labels)
 ```
 with helpers `_isHighRiskLabel` / `_isMidRiskLabel` / `_isLowRiskLabel` that check `_isLowRiskLabel` FIRST (so "notckd" doesn't match the `contains('ckd')` branch for high risk).
 
+## Image preprocessing
+
+`_preprocessImage` in `assessment_screen.dart` is the only place that produces the `List<List<List<double>>>` tensor fed to `MLService.classifyImage`. It:
+
+1. Decodes the file to an `Image` via `package:image`.
+2. **`img.bakeOrientation(decoded)`** — mandatory. Phone cameras often save landscape-oriented pixels with EXIF rotation metadata (rotation=6 is common on Android portrait shots); the resize step below does NOT honor EXIF, so without baking, the model receives a 90°-rotated tensor and silently returns garbage.
+3. Resizes to 128×128 and emits `/255.0` normalized floats — matches `model_training/train_images.py`'s `img / 255.0` convention for eye/lung/malaria.
+
+**Per-model input-range quirk** — the current `skin_disease_model.tflite` was trained with `mobilenet_v2.preprocess_input` baked into the graph (expects [0, 255] raw), so `ml_service.dart` scales by 255 inside `classifyImage` for `type == 'skin'` only. That stopgap goes away on the next retrain — `kaggle_skin_model.py` now drops `preprocess_input` to match the [0, 1] convention.
+
 ## Android manifest requirements
 
-`android/app/src/main/AndroidManifest.xml` must declare `<queries>` entries for:
-- `https`, `http`, `sms`, `smsto`, `tel` schemes (so `canLaunchUrl` can see handlers)
-- Explicit `<package android:name="com.whatsapp" />` and `com.whatsapp.w4b`
+`android/app/src/main/AndroidManifest.xml` must declare:
 
-Plus permissions: `CAMERA`, `RECORD_AUDIO`, `WRITE_EXTERNAL_STORAGE`, `READ_EXTERNAL_STORAGE`, `VIBRATE`, `INTERNET`.
+1. **`<queries>` entries** for `https`, `http`, `sms`, `smsto`, `tel` schemes (so `canLaunchUrl` can see handlers), plus explicit `<package android:name="com.whatsapp" />` and `com.whatsapp.w4b`. Without the queries block, the "Send summary to PHC" button reports "WhatsApp not available" even when installed.
+2. **`android:allowBackup="false"`** on `<application>` plus `android:dataExtractionRules="@xml/data_extraction_rules"`. Default `allowBackup=true` would let `adb backup` and Android 12+ D2D transfer copy the encrypted SQLite — ciphertext is non-portable (keys live in Android Keystore on the source device), so a backup copy is both useless to the user AND a static target. The `xml/data_extraction_rules.xml` excludes root / file / database / sharedpref / external from both cloud-backup and device-transfer.
+3. **Permissions**: `CAMERA`, `RECORD_AUDIO`, `VIBRATE`, `INTERNET`, plus `WRITE_EXTERNAL_STORAGE` capped at `maxSdkVersion="28"` and `READ_EXTERNAL_STORAGE` at `"32"` — legacy storage perms are no-ops on API 29+ so capping them prevents Play Store warnings and keeps permission disclosure honest.
 
-Without the queries block, the "Send summary to PHC" button reports "WhatsApp not available" even when installed.
+## Release build — R8 and ProGuard
+
+Release builds run R8 minification + resource shrinking (`isMinifyEnabled = true` / `isShrinkResources = true` in `android/app/build.gradle.kts`). Debug builds skip R8, which means "works on debug" does NOT imply "works in release" — this has bitten CI twice.
+
+`android/app/proguard-rules.pro` has two kinds of rules:
+
+- **`-dontwarn`** for optional classes we intentionally don't bundle (ML Kit Chinese/Japanese/Korean/Devanagari script recognizers, TFLite GPU delegate, Play Core split-install). Without these, R8 aborts with "Missing classes detected" during `minifyReleaseWithR8`.
+- **`-keep`** for every plugin that uses reflection (`tflite_flutter` + native JNI, `flutter_secure_storage`, `encrypt` + `pointycastle`, `google_mlkit_text_recognition`, `sqflite`, `pdf` + `printing`, `speech_to_text`). Without these, R8 obfuscates method names that native code or provider lookups expect by string — producing release-only silent failures (AES-GCM decryption returns the raw envelope, TFLite inference crashes, PDF generation fails).
+
+Whenever adding a new plugin dependency, check its README for ProGuard rules and add them here. When in doubt, `flutter build apk --release` is the fastest way to catch R8-introduced breakage — it takes ~80s on a warm machine and the `Missing class` error messages are specific enough to be actionable.
 
 ## Release signing (CI + local)
 
-`android/app/build.gradle.kts` reads `android/keystore.properties` if present and signs with the real upload key; otherwise it falls back to the debug keystore so `flutter run --release` works on a fresh clone. The CI workflow at [.github/workflows/build-apk.yml](.github/workflows/build-apk.yml) creates `keystore.properties` from four GitHub Secrets (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`) when they're configured, then falls through when they're not.
+`android/app/build.gradle.kts` reads `android/keystore.properties` if present and signs with the real upload key; otherwise it falls back to the debug keystore so `flutter run --release` works on a fresh clone. The CI workflow at [.github/workflows/build-apk.yml](.github/workflows/build-apk.yml) creates `keystore.properties` from four GitHub Secrets (`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`) when they're configured, then falls through when they're not. The `if:` guard on the "Configure release signing" step reads a job-level env var (`env.HAS_KEYSTORE`), not a step-level one — a step-level env var is invisible to its own `if:` and was the source of a CI bug.
 
 `keystore.properties` and any `*.jks` under `android_app/android/` are gitignored — these files contain private keys and must never be committed.
 
 See [KEYSTORE_SETUP.md](KEYSTORE_SETUP.md) at the repo root for the one-time secret-generation recipe (5 minutes).
+
+## Internationalization (12 languages at 100%)
+
+All 12 locales (`en`, `hi`, `ta`, `te`, `ml`, `kn`, `bn`, `mr`, `gu`, `or`, `pa`, `as`) ship with all 296 canonical UI strings fully translated in `android_app/lib/l10n/translations.dart`. Access via `AppTranslations.t(key, langCode)` — chain: `_translations[langCode]?[key] ?? _translations['en']?[key] ?? key`. A missing key in the target language transparently falls back to English, and a missing key in English too surfaces the raw key name (which is the behavior a contributor sees when they add a `_t('new_key')` call without adding the key to the English block — a useful bug-finding signal).
+
+**When adding a new string:**
+1. Add it to the English block first — that's the source of truth.
+2. All 11 other languages automatically English-fallback until they're retranslated; no crash.
+3. A future translation pass can fill the non-English blocks, but don't block merging on it.
+
+Translations use community-spoken vocabulary, not Sanskritic/academic medical terms (fever is `ताप` / `காய்ச்சல்` / `ജ്വരം`, not `ज्वर` / `ஜ்வரம்`). Image-capture emojis and proper nouns (`AI`, `SpO₂`, `WhatsApp`) stay in Latin/symbol form across all languages.
 
 ## Dart-file editing rules
 
@@ -191,7 +223,7 @@ See [KEYSTORE_SETUP.md](KEYSTORE_SETUP.md) at the repo root for the one-time sec
 3. **Symptom keys must match clinical_knowledge.dart's `symptomSystemMap`**. Before introducing a new key, either add it to `symptomSystemMap` or alias it from an existing canonical.
 4. **Disease profiles must use canonical ssm keys** (no alias names). The engine matches against the raw key in the profile, not through the alias map.
 5. **Complete corrected files preferred over partial edits** when refactoring.
-6. **Order(`symbol`, `price`, `qty`) — N/A** for this project, but the general rule that float values silently reject applies to TFLite tensor shapes: mismatched input shapes throw at runtime, not compile time.
+6. **TFLite tensor shapes are not compile-time checked** — mismatched input shapes throw at runtime only. Always cross-reference the model's `*_metadata.json` in `assets/models/` before changing any `classifyImage` / `_run` preprocessing.
 
 ## Known-dead-end experiments (don't re-attempt without strong reason)
 
@@ -213,5 +245,10 @@ Migrations are additive (`onUpgrade` adds columns; never drops). Corrupted JSON 
 
 1. First check if the feature has already been tried and discarded (see "Known-dead-end experiments" above and git log for `competitor-parity` commits).
 2. Before implementing in Dart, run the reachability audit to confirm no existing piece is broken. It's embarrassing to ship a new feature on top of an invisible regression.
-3. `flutter analyze` 0 errors + `flutter build apk --debug` succeeding is the release gate. Both must pass before committing.
-4. Commits on `main` should be self-describing — the git log is the closest thing to a changelog.
+3. `flutter analyze --no-fatal-infos` from `android_app/` must show 0 errors + 0 warnings. The current baseline is 182 pre-existing `prefer_const_constructors` info hints; anything above that is new and must be reviewed.
+4. `flutter build apk --debug` AND `flutter build apk --release` should both succeed locally — release catches R8 / ProGuard issues that debug misses.
+5. Commits on `main` should be self-describing — the git log is the closest thing to a changelog.
+
+## Audit baseline
+
+The codebase has been through two rounds of parallel-subagent code audits (security, clinical, Dart correctness, ML integration, UI/a11y/i18n, build/CI). 32 real bugs were found and fixed across those rounds; the git log entries titled "Round-{1,2} audit ..." capture the rationale for each. When adding new code, assume you're being held to that same bar — the audit agents will flag things like missing `mounted` checks after `await`, silent decrypt-failure fallbacks, R8-unfriendly reflection calls, hardcoded English strings that should go through `_t()`, and patient-safety-adjacent issues like emergency-number validation gaps.
