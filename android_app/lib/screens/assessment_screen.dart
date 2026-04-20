@@ -61,7 +61,11 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
 
   // Image
   File? _capturedImage;
-  String _imageType = 'lung'; // 'eye', 'lung', 'malaria'
+  // Default to 'skin' because dermatology triage is the most-used image
+  // modality for an ASHA on a phone camera — lung X-rays and blood smears
+  // are far rarer. Having the most-common option pre-selected also makes
+  // it immediately visible in the collapsed dropdown.
+  String _imageType = 'skin'; // 'skin', 'eye', 'lung', 'malaria'
   List<MapEntry<String, double>>? _imageResults;
 
   // Notes
@@ -1276,10 +1280,15 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
                 value: _imageType,
                 isExpanded: true,
                 items: const [
+                  // Skin listed first — most-common image-triage use case
+                  // on a phone camera. \u{1FA79} is the adhesive-bandage
+                  // emoji which renders predictably across Android emoji
+                  // sets (the previous ✋ raised-hand was ambiguous and
+                  // rendered as a tofu box on some older devices).
+                  DropdownMenuItem(value: 'skin', child: Text('\u{1FA79} Skin Photo — Rash, Lesion, Infection')),
                   DropdownMenuItem(value: 'eye', child: Text('\u{1F441} Eye Photo — Cataract, Glaucoma, DR')),
                   DropdownMenuItem(value: 'lung', child: Text('\u{1FA7B} Chest X-ray — Pneumonia, TB, COVID')),
                   DropdownMenuItem(value: 'malaria', child: Text('\u{1FA78} Blood Smear — Malaria Parasite')),
-                  DropdownMenuItem(value: 'skin', child: Text('\u{270B} Skin Photo — Triage Screening')),
                 ],
                 onChanged: (val) {
                   if (val != null) setState(() => _imageType = val);
