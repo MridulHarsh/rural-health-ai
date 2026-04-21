@@ -367,6 +367,12 @@ class AppTranslations {
       'dog_bite': 'Dog Bite',
       'insect_bite': 'Insect Bite',
       'weakness_general': 'General Weakness',
+      'call_ambulance': 'Call Ambulance',
+      'call_ambulance_subtitle': 'Dial 108 — India emergency ambulance',
+      'call_ambulance_confirm_title': 'Call ambulance?',
+      'call_ambulance_confirm_body': 'This will dial 108, the nationwide emergency ambulance number.',
+      'call_ambulance_cta': 'Call 108',
+      'call_ambulance_launch_failed': 'Could not open the dialer. Please dial 108 manually.',
 },
 
     // ─── HINDI ────────────────────────────────────────────────
@@ -674,6 +680,12 @@ class AppTranslations {
       'dog_bite': 'कुत्ते का काटना',
       'insect_bite': 'कीड़े का काटना',
       'weakness_general': 'सामान्य कमजोरी',
+      'call_ambulance': 'एम्बुलेंस बुलाएं',
+      'call_ambulance_subtitle': '108 डायल करें — आपातकालीन एम्बुलेंस',
+      'call_ambulance_confirm_title': 'एम्बुलेंस बुलाएं?',
+      'call_ambulance_confirm_body': 'यह 108 पर कॉल करेगा — देशभर की आपातकालीन एम्बुलेंस संख्या।',
+      'call_ambulance_cta': '108 पर कॉल करें',
+      'call_ambulance_launch_failed': 'डायलर नहीं खुला। कृपया 108 खुद डायल करें।',
     },
 
     // ─── TAMIL ────────────────────────────────────────────────
@@ -981,6 +993,12 @@ class AppTranslations {
       'dog_bite': 'நாய் கடி',
       'insect_bite': 'பூச்சி கடி',
       'weakness_general': 'பொதுவான பலவீனம்',
+      'call_ambulance': 'ஆம்புலன்ஸை அழை',
+      'call_ambulance_subtitle': '108 ஐ டயல் செய் — அவசர ஆம்புலன்ஸ்',
+      'call_ambulance_confirm_title': 'ஆம்புலன்ஸை அழைக்கவா?',
+      'call_ambulance_confirm_body': 'இது 108 ஐ அழைக்கும் — தேசிய அவசர ஆம்புலன்ஸ் எண்.',
+      'call_ambulance_cta': '108 ஐ அழை',
+      'call_ambulance_launch_failed': 'டயலரை திறக்க முடியவில்லை. தயவு செய்து 108 ஐ கையால் அழைக்கவும்.',
     },
 
     // ─── TELUGU ───────────────────────────────────────────────
@@ -1288,6 +1306,12 @@ class AppTranslations {
       'dog_bite': 'కుక్క కాటు',
       'insect_bite': 'కీటకం కాటు',
       'weakness_general': 'సాధారణ బలహీనత',
+      'call_ambulance': 'ఆంబులెన్స్ పిలవండి',
+      'call_ambulance_subtitle': '108 డయల్ చేయండి — అత్యవసర ఆంబులెన్స్',
+      'call_ambulance_confirm_title': 'ఆంబులెన్స్ పిలవాలా?',
+      'call_ambulance_confirm_body': 'ఇది 108 కు కాల్ చేస్తుంది — దేశవ్యాప్త అత్యవసర ఆంబులెన్స్ నంబర్.',
+      'call_ambulance_cta': '108 కు కాల్ చేయండి',
+      'call_ambulance_launch_failed': 'డయలర్ తెరవలేదు. దయచేసి 108 ను స్వయంగా డయల్ చేయండి.',
     },
 
     // ─── MALAYALAM ────────────────────────────────────────────
@@ -1595,6 +1619,12 @@ class AppTranslations {
       'dog_bite': 'നായ് കടി',
       'insect_bite': 'പ്രാണി കടി',
       'weakness_general': 'പൊതു ബലക്ഷയം',
+      'call_ambulance': 'ആംബുലൻസ് വിളിക്കുക',
+      'call_ambulance_subtitle': '108 ഡയൽ ചെയ്യുക — അടിയന്തര ആംബുലൻസ്',
+      'call_ambulance_confirm_title': 'ആംബുലൻസ് വിളിക്കണോ?',
+      'call_ambulance_confirm_body': 'ഇത് 108-ൽ വിളിക്കും — രാജ്യവ്യാപക അടിയന്തര ആംബുലൻസ് നമ്പർ.',
+      'call_ambulance_cta': '108 വിളിക്കുക',
+      'call_ambulance_launch_failed': 'ഡയലർ തുറക്കാൻ കഴിഞ്ഞില്ല. ദയവായി 108 നേരിട്ട് വിളിക്കുക.',
     },
 
     // ─── KANNADA ──────────────────────────────────────────────
@@ -1902,6 +1932,12 @@ class AppTranslations {
       'dog_bite': 'ನಾಯಿ ಕಚ್ಚುವಿಕೆ',
       'insect_bite': 'ಕೀಟ ಕಚ್ಚುವಿಕೆ',
       'weakness_general': 'ಸಾಮಾನ್ಯ ದೌರ್ಬಲ್ಯ',
+      'call_ambulance': 'ಆಂಬ್ಯುಲೆನ್ಸ್ ಕರೆಯಿರಿ',
+      'call_ambulance_subtitle': '108 ಡಯಲ್ ಮಾಡಿ — ತುರ್ತು ಆಂಬ್ಯುಲೆನ್ಸ್',
+      'call_ambulance_confirm_title': 'ಆಂಬ್ಯುಲೆನ್ಸ್ ಕರೆಯಬೇಕೇ?',
+      'call_ambulance_confirm_body': 'ಇದು 108 ಗೆ ಕರೆ ಮಾಡುತ್ತದೆ — ದೇಶವ್ಯಾಪಕ ತುರ್ತು ಆಂಬ್ಯುಲೆನ್ಸ್ ಸಂಖ್ಯೆ.',
+      'call_ambulance_cta': '108 ಕರೆಯಿರಿ',
+      'call_ambulance_launch_failed': 'ಡಯಲರ್ ತೆರೆಯಲಾಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು 108 ಅನ್ನು ಕೈಯಿಂದ ಡಯಲ್ ಮಾಡಿ.',
     },
 
     // ─── BENGALI ──────────────────────────────────────────────

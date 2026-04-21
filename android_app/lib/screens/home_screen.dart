@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../l10n/translations.dart';
 import '../services/ml_service.dart';
 import '../services/database_service.dart';
+import '../services/handoff_service.dart';
 import '../services/inventory_service.dart';
 import '../services/mch_service.dart';
 import '../services/outbreak_detector.dart';
@@ -59,6 +60,69 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _t(String key) => AppTranslations.t(key, _lang);
+
+  /// Confirm then dial 108 (India's nationwide emergency ambulance).
+  /// Two-tap guard prevents accidental dials from pocket taps, while keeping
+  /// the path short enough for genuine emergencies (≤2 taps to dial).
+  Future<void> _callAmbulance() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+        ),
+        icon: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFDC2626).withValues(alpha: 0.1),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.emergency_rounded,
+            color: Color(0xFFDC2626),
+            size: 32,
+          ),
+        ),
+        title: Text(
+          _t('call_ambulance_confirm_title'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        content: Text(
+          _t('call_ambulance_confirm_body'),
+          textAlign: TextAlign.center,
+        ),
+        actionsAlignment: MainAxisAlignment.spaceEvenly,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(_t('cancel')),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+            ),
+            icon: const Icon(Icons.call_rounded, size: 18),
+            label: Text(_t('call_ambulance_cta')),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    final ok = await HandoffService.dial(HandoffService.defaultEmergencyNumber);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_t('call_ambulance_launch_failed')),
+          backgroundColor: const Color(0xFFDC2626),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -206,6 +270,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
                 ).animate().slideY(begin: 0.1, duration: 500.ms).fadeIn(),
+
+                const SizedBox(height: 20),
+
+                // ── Emergency ambulance shortcut (108 — India) ──
+                _EmergencyCallCard(
+                  title: _t('call_ambulance'),
+                  subtitle: _t('call_ambulance_subtitle'),
+                  onTap: _callAmbulance,
+                ),
 
                 const SizedBox(height: 28),
 
@@ -571,5 +644,98 @@ class _FeatureCard extends StatelessWidget {
         ),
       ),
     ).animate().slideX(begin: 0.05, duration: 400.ms, delay: delay.ms).fadeIn();
+  }
+}
+
+class _EmergencyCallCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _EmergencyCallCard({
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFDC2626), Color(0xFFB91C1C)],
+          ),
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFDC2626).withValues(alpha: 0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(
+                Icons.emergency_rounded,
+                color: Colors.white,
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.call_rounded,
+                color: Colors.white,
+                size: 22,
+              ),
+            ),
+          ],
+        ),
+      ),
+    )
+        .animate()
+        .slideY(begin: 0.1, duration: 450.ms, delay: 50.ms)
+        .fadeIn();
   }
 }
