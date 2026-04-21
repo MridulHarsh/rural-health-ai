@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
@@ -68,9 +69,9 @@ class SpecialistModelsService {
         final fj = await rootBundle.loadString('assets/models/${m.key}_features.json');
         m.features = List<String>.from(json.decode(fj));
         m.loaded = true;
-        print('[Specialist] Loaded ${m.name}');
+        debugPrint('[Specialist] Loaded ${m.name}');
       } catch (e) {
-        print('[Specialist] ${m.name} not available: $e');
+        debugPrint('[Specialist] ${m.name} not available: ${e.runtimeType}');
       }
     }
     _initialized = true;
@@ -174,7 +175,7 @@ class SpecialistModelsService {
         featureCoverage: coverage,
       );
     } catch (e) {
-      print('[Specialist] ${m.name} error: $e');
+      debugPrint('[Specialist] ${m.name} error: ${e.runtimeType}');
       return null;
     }
   }

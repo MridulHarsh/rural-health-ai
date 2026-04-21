@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Offline-first policy: this app ships with no networking code. The INTERNET
+    permission is held only because url_launcher and the Flutter engine declare
+    it transitively, not because the app dials out. Declaring
+    cleartextTrafficPermitted="false" as the base policy ensures that if any
+    future code path (or a transitive plugin update) accidentally tries plain
+    http://, Android blocks it at the platform layer rather than silently
+    leaking patient data over an unencrypted connection.
+
+    Trust anchors include the system store only — no user-installed CAs — so
+    an MITM via a compromised user cert store cannot decrypt app traffic.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

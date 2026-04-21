@@ -147,7 +147,11 @@ class DatabaseService {
     try {
       return jsonDecode(raw);
     } catch (e) {
-      debugPrint('[DatabaseService] corrupted JSON column: $e');
+      // The offending JSON is patient data (symptoms / vitals / conditions);
+      // jsonDecode exceptions typically embed a fragment of the source
+      // string. Log only the exception type so release-build logcat never
+      // leaks partial patient records.
+      debugPrint('[DatabaseService] corrupted JSON column: ${e.runtimeType}');
       return fallback;
     }
   }

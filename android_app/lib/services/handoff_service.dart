@@ -91,7 +91,12 @@ class HandoffService {
       }
       return await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (e) {
-      debugPrint('[HandoffService] launch error for $url: $e');
+      // Do NOT log the full URL — WhatsApp / SMS handoffs URL-encode the
+      // patient summary (name, conditions, notes) into the query string,
+      // and debugPrint is NOT stripped in release builds. Log only the
+      // scheme and the exception type.
+      final scheme = Uri.tryParse(url)?.scheme ?? 'unknown';
+      debugPrint('[HandoffService] launch error (scheme=$scheme): ${e.runtimeType}');
       return false;
     }
   }
