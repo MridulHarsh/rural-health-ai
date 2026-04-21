@@ -5,6 +5,8 @@
 
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class HandoffService {
@@ -103,4 +105,72 @@ class HandoffService {
 
   /// Default emergency number for India. Override per deployment region.
   static const String defaultEmergencyNumber = '108';
+
+  /// Write the FHIR bundle JSON to a short-lived file in the app cache dir
+  /// and hand it off via the platform share sheet. The ASHA can then pick
+  /// WhatsApp / Gmail / Drive / Bluetooth — whatever the PHC physician uses.
+  ///
+  /// The file is written to the app's *cache* directory (not documents)
+  /// because it's a share-in-flight artefact, not durable state. Android
+  /// reclaims cache aggressively under storage pressure, which is the
+  /// right behavior: if the share didn't happen, the patient data doesn't
+  /// linger on disk.
+  ///
+  /// The filename is `fhir_<hash-prefix>_<timestamp>.json` — the hash
+  /// prefix makes dedup obvious to a receiver who gets two copies, and the
+  /// timestamp prevents collisions when the same bundle is re-shared.
+  ///
+  /// Returns true on a clean share-sheet return, false on any launch
+  /// error. `share_plus` swallows user-cancellation as a success — that's
+  /// correct: the ASHA chose not to send, which isn't a failure.
+  static Future<bool> shareFhirBundle({
+    required String bundleJson,
+    required String bundleHash,
+    String? subject,
+    String? messageBody,
+  }) async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final hashPrefix = bundleHash.length >= 8
+          ? bundleHash.substring(0, 8)
+          : bundleHash;
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final file = File('${dir.path}/fhir_${hashPrefix}_$ts.json');
+      await file.writeAsString(bundleJson, flush: true);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'application/fhir+json')],
+        subject: subject ?? 'Clinical Assessment Summary (FHIR Bundle)',
+        text: messageBody,
+      );
+      return true;
+    } catch (e) {
+      // Never log the bundle — it contains patient name + conditions.
+      debugPrint('[HandoffService] FHIR share error: ${e.runtimeType}');
+      return false;
+    }
+  }
+
+  /// Share the de-identified analytics JSONL via the platform share sheet.
+  /// Used from Settings → "Export my anonymized contributions" so the ASHA
+  /// can send the rolling record to the NeuCure research inbox manually
+  /// (explicit, visible, user-initiated — no silent network upload).
+  static Future<bool> shareAnalyticsFile({
+    required String filePath,
+    String? messageBody,
+  }) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) return false;
+      await Share.shareXFiles(
+        [XFile(filePath, mimeType: 'application/x-ndjson')],
+        subject: 'De-identified outcome records',
+        text: messageBody,
+      );
+      return true;
+    } catch (e) {
+      debugPrint(
+          '[HandoffService] analytics share error: ${e.runtimeType}');
+      return false;
+    }
+  }
 }

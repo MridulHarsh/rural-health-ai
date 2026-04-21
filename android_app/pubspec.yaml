@@ -45,9 +45,11 @@ dependencies:
   intl: ^0.20.2
   permission_handler: ^11.3.0
   uuid: ^4.3.3
+  crypto: ^3.0.3                               # SHA-256 for FHIR encounter-hash provenance
 
   # ── New: competitive-parity features ──
   url_launcher: ^6.3.0                         # WhatsApp / SMS / tel intents for PHC handoff
+  share_plus: ^10.0.0                          # System share sheet for FHIR bundle + analytics JSONL attachments
   vibration: ^2.0.0                            # Emergency alarm on red-flag trigger
   encrypt: ^5.0.3                              # AES-256 at-rest encryption for PII
   flutter_secure_storage: ^9.2.2               # Key storage for encrypt

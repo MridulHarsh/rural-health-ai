@@ -15,6 +15,7 @@ import '../services/ml_service.dart';
 import '../services/pdf_service.dart';
 import '../services/handoff_service.dart';
 import '../services/emergency_service.dart';
+import '../services/fhir_service.dart';
 
 class ResultsScreen extends StatefulWidget {
   final AssessmentResult result;
@@ -943,6 +944,26 @@ class _ResultsScreenState extends State<ResultsScreen> {
         ),
         const SizedBox(height: 12),
 
+        // FHIR bundle share — ABDM-compatible structured handoff. Lives
+        // below the plain-text WhatsApp handoff because most receivers
+        // still prefer the readable summary; the FHIR attachment is for
+        // HIU-integrated clinics that can parse it.
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _shareFhirBundle,
+            icon: const Icon(Icons.share_outlined, size: 20),
+            label: Text(_t('share_fhir_bundle')),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+
         // Save button
         SizedBox(
           width: double.infinity,
@@ -1034,6 +1055,38 @@ class _ResultsScreenState extends State<ResultsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error generating PDF: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Build the FHIR R4 Bundle for this assessment and hand it off via the
+  /// platform share sheet. The encounter hash is included in the share
+  /// message so a receiver who gets two copies can dedup without opening
+  /// either attachment.
+  Future<void> _shareFhirBundle() async {
+    try {
+      final bundle = FhirBundleService.buildBundle(widget.result);
+      final json = FhirBundleService.toJsonString(bundle);
+      final hash = FhirBundleService.computeHash(bundle);
+      final ok = await HandoffService.shareFhirBundle(
+        bundleJson: json,
+        bundleHash: hash,
+        subject: _t('share_fhir_bundle'),
+        messageBody: '${_t('fhir_bundle_message')}${hash.substring(0, 12)}…',
+      );
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_t('fhir_bundle_share_failed'))),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_t('fhir_bundle_share_failed')),
             backgroundColor: Colors.red,
           ),
         );

@@ -3,7 +3,12 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../l10n/translations.dart';
+import '../models/patient.dart';
 import '../services/database_service.dart';
+import '../services/fhir_service.dart';
+import '../services/handoff_service.dart';
+import '../services/outcome_service.dart';
+import 'followup_screen.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -14,6 +19,7 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   List<Map<String, dynamic>> _records = [];
+  Set<String> _assessmentsWithOutcomes = {};
   bool _isLoading = true;
   String _lang = 'en';
 
@@ -29,10 +35,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final prefs = await SharedPreferences.getInstance();
     final lang = prefs.getString('language') ?? 'en';
     final records = await DatabaseService.getAssessments();
+    final outcomes = await OutcomeService.assessmentIdsWithOutcomes();
     if (!mounted) return;
     setState(() {
       _lang = lang;
       _records = records;
+      _assessmentsWithOutcomes = outcomes;
       _isLoading = false;
     });
   }
@@ -49,6 +57,100 @@ class _HistoryScreenState extends State<HistoryScreen> {
         return const Color(0xFF16A34A);
       default:
         return Colors.grey;
+    }
+  }
+
+  /// Rebuild an AssessmentResult from the stored SQLite row so we can hand
+  /// it to the follow-up screen and the FHIR builder without a second
+  /// round-trip. This is a lossy reconstruction — image bytes and the
+  /// tabular specialist screenings aren't persisted, only their paths /
+  /// summary fields — but it's enough for the outcome-recording and FHIR
+  /// handoff flows which only read patient + vitals + conditions + risk.
+  AssessmentResult _fromRecord(Map<String, dynamic> r) {
+    final patient = Patient(
+      id: r['id']?.toString() ?? '',
+      name: r['patientName']?.toString() ?? 'Unknown',
+      age: (r['patientAge'] as int?) ?? 0,
+      gender: r['patientGender']?.toString() ?? '',
+      createdAt: DateTime.tryParse(r['createdAt']?.toString() ?? '') ??
+          DateTime.now(),
+      householdId: r['householdId']?.toString(),
+      abhaId: r['abhaId']?.toString(),
+      abhaAddress: r['abhaAddress']?.toString(),
+    );
+
+    final vitalsMap = (r['vitals'] as Map?)?.cast<String, dynamic>() ?? {};
+    final vitals = Vitals.fromJson(vitalsMap);
+
+    final symptoms = (r['symptoms'] as List?)?.cast<String>() ?? const [];
+    final nextSteps = (r['nextSteps'] as List?)?.cast<String>() ?? const [];
+
+    final conditions = <PredictedCondition>[
+      for (final c in (r['conditions'] as List? ?? const []))
+        if (c is Map)
+          PredictedCondition(
+            canonicalId: c['canonicalId']?.toString() ??
+                c['name']?.toString().toLowerCase().replaceAll(' ', '_') ??
+                'unknown',
+            name: c['name']?.toString() ?? 'Unknown',
+            confidence: (c['confidence'] as num?)?.toDouble() ?? 0.0,
+            riskLevel: _riskFromName(c['riskLevel']?.toString()),
+            description: c['description']?.toString(),
+            reasoning: c['reasoning']?.toString(),
+            matchedCardinal:
+                (c['matchedCardinal'] as List?)?.cast<String>() ?? const [],
+            missingCardinal:
+                (c['missingCardinal'] as List?)?.cast<String>() ?? const [],
+            nextSteps: (c['nextSteps'] as List?)?.cast<String>() ?? const [],
+          ),
+    ];
+
+    return AssessmentResult(
+      patient: patient,
+      vitals: vitals,
+      symptoms: symptoms,
+      conditions: conditions,
+      overallRisk: _riskFromName(r['overallRisk']?.toString()),
+      nextSteps: nextSteps,
+      imagePath: r['imagePath']?.toString(),
+      voiceTranscript: r['voiceTranscript']?.toString(),
+      additionalNotes: r['notes']?.toString(),
+      assessedAt: patient.createdAt,
+    );
+  }
+
+  RiskLevel _riskFromName(String? name) {
+    return RiskLevel.values.firstWhere(
+      (r) => r.name == name,
+      orElse: () => RiskLevel.normal,
+    );
+  }
+
+  Future<void> _recordOutcome(Map<String, dynamic> record) async {
+    final result = _fromRecord(record);
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => FollowupScreen(assessment: result),
+      ),
+    );
+    if (saved == true) _load();
+  }
+
+  Future<void> _shareFhir(Map<String, dynamic> record) async {
+    final result = _fromRecord(record);
+    final bundle = FhirBundleService.buildBundle(result);
+    final json = FhirBundleService.toJsonString(bundle);
+    final hash = FhirBundleService.computeHash(bundle);
+    final ok = await HandoffService.shareFhirBundle(
+      bundleJson: json,
+      bundleHash: hash,
+      subject: _t('share_fhir_bundle'),
+      messageBody: '${_t('fhir_bundle_message')}${hash.substring(0, 12)}…',
+    );
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_t('fhir_bundle_share_failed'))),
+      );
     }
   }
 
@@ -84,6 +186,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     final createdAt = record['createdAt'] != null
                         ? DateTime.tryParse(record['createdAt'])
                         : null;
+                    final assessmentId = record['id']?.toString() ?? '';
+                    final hasOutcome =
+                        _assessmentsWithOutcomes.contains(assessmentId);
+                    final followupDue = createdAt != null &&
+                        OutcomeService.isFollowupDue(
+                          assessmentDate: createdAt,
+                          hasOutcome: hasOutcome,
+                        );
 
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 12),
@@ -117,6 +227,19 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                     ),
                                   ),
                                 ),
+                                const SizedBox(width: 8),
+                                if (followupDue)
+                                  _statusBadge(
+                                    label: _t('followup_due'),
+                                    color: const Color(0xFFD97706),
+                                    icon: Icons.schedule_rounded,
+                                  )
+                                else if (hasOutcome)
+                                  _statusBadge(
+                                    label: _t('followup_recorded'),
+                                    color: const Color(0xFF16A34A),
+                                    icon: Icons.check_circle_outline,
+                                  ),
                                 const Spacer(),
                                 if (createdAt != null)
                                   Text(
@@ -158,6 +281,46 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                 }).toList(),
                               ),
                             ],
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () => _recordOutcome(record),
+                                    icon: Icon(
+                                        hasOutcome
+                                            ? Icons.edit_note_rounded
+                                            : Icons.fact_check_outlined,
+                                        size: 18),
+                                    label: Text(
+                                      _t('record_outcome'),
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 10),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () => _shareFhir(record),
+                                    icon: const Icon(Icons.share_outlined,
+                                        size: 18),
+                                    label: Text(
+                                      _t('share_fhir_bundle'),
+                                      style: const TextStyle(fontSize: 12),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    style: OutlinedButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                          vertical: 10),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ],
                         ),
                       ),
@@ -166,6 +329,36 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         .slideY(begin: 0.05);
                   },
                 ),
+    );
+  }
+
+  Widget _statusBadge({
+    required String label,
+    required Color color,
+    required IconData icon,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: color,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

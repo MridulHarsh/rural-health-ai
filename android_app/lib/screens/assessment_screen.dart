@@ -40,6 +40,11 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   final _nameController = TextEditingController();
   final _ageController = TextEditingController();
   final _householdController = TextEditingController();
+  // ABHA (Ayushman Bharat Health Account) — optional. When present, the
+  // values flow through the FHIR Patient.identifier on export. The ID is
+  // a 14-digit number; the address is `username@hiu`.
+  final _abhaIdController = TextEditingController();
+  final _abhaAddressController = TextEditingController();
   String _gender = 'Male';
 
   // Vitals
@@ -387,6 +392,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
     // Convert conditions
     final conditions = diagnosis.conditions.map((c) {
       return PredictedCondition(
+        canonicalId: c.profile.id,
         name: c.profile.displayName,
         confidence: c.confidence,
         riskLevel: mapRisk(c.risk),
@@ -434,6 +440,12 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
         householdId: _householdController.text.trim().isEmpty
             ? null
             : _householdController.text.trim(),
+        abhaId: _abhaIdController.text.trim().isEmpty
+            ? null
+            : _abhaIdController.text.trim(),
+        abhaAddress: _abhaAddressController.text.trim().isEmpty
+            ? null
+            : _abhaAddressController.text.trim(),
       ),
       vitals: vitals,
       symptoms: allSymptoms.toList(),
@@ -896,6 +908,30 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
               helperText:
                   'Same ID for family members → cluster view for contagion',
               prefixIcon: const Icon(Icons.home_outlined),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+          const SizedBox(height: 20),
+          TextField(
+            controller: _abhaIdController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: _t('abha_id'),
+              helperText: _t('abha_id_hint'),
+              prefixIcon: const Icon(Icons.badge_outlined),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _abhaAddressController,
+            keyboardType: TextInputType.emailAddress,
+            decoration: InputDecoration(
+              labelText: _t('abha_address'),
+              helperText: _t('abha_address_hint'),
+              prefixIcon: const Icon(Icons.alternate_email),
               border:
                   OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             ),
@@ -1619,6 +1655,8 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
     _nameController.dispose();
     _ageController.dispose();
     _householdController.dispose();
+    _abhaIdController.dispose();
+    _abhaAddressController.dispose();
     _tempController.dispose();
     _bpController.dispose();
     _hrController.dispose();

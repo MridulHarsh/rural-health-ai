@@ -373,6 +373,52 @@ class AppTranslations {
       'call_ambulance_confirm_body': 'This will dial 108, the nationwide emergency ambulance number.',
       'call_ambulance_cta': 'Call 108',
       'call_ambulance_launch_failed': 'Could not open the dialer. Please dial 108 manually.',
+      // ABHA + FHIR handoff (feature #1)
+      'abha_id': 'ABHA ID (optional)',
+      'abha_id_hint': '14-digit Ayushman Bharat Health Account number',
+      'abha_address': 'ABHA Address (optional)',
+      'abha_address_hint': 'e.g. username@ndhm',
+      'share_fhir_bundle': 'Share FHIR bundle',
+      'share_fhir_subtitle': 'Send ABDM-compatible record to the PHC',
+      'fhir_bundle_share_failed': 'Could not open the share sheet. Please try again.',
+      'fhir_bundle_message':
+          'Clinical Assessment Summary — FHIR Bundle attached. Encounter hash: ',
+      // Follow-up outcome tracking (feature #3)
+      'record_outcome': 'Record outcome',
+      'record_outcome_subtitle': 'Log the PHC diagnosis and adherence',
+      'followup_title': 'Record Follow-up',
+      'followup_due': 'Follow-up due',
+      'followup_recorded': 'Outcome recorded',
+      'followup_date': 'Follow-up date',
+      'actual_diagnosis': 'PHC diagnosis',
+      'actual_diagnosis_hint': 'What did the physician diagnose?',
+      'treatment_given': 'Treatment given',
+      'treatment_given_hint': 'Drugs / procedures prescribed',
+      'adherence': 'Adherence',
+      'adherence_full': 'Full',
+      'adherence_partial': 'Partial',
+      'adherence_none': 'None',
+      'adherence_unknown': 'Unknown',
+      'outcome_status': 'Outcome',
+      'outcome_resolved': 'Resolved',
+      'outcome_improving': 'Improving',
+      'outcome_worse': 'Same / worse',
+      'outcome_referred_further': 'Referred further',
+      'outcome_no_phc_visit': 'No PHC visit',
+      'followup_notes': 'Notes',
+      'followup_notes_hint': 'Context — transport, household, etc.',
+      'consent_share_deidentified':
+          'Share a de-identified copy for research',
+      'consent_share_deidentified_body':
+          'Age band, gender, conditions and outcome only — no name, ABHA ID or free text. You can withdraw in Settings.',
+      'save_outcome': 'Save outcome',
+      'outcome_saved': 'Outcome saved.',
+      'outcome_save_failed': 'Could not save outcome. Please try again.',
+      // Analytics (feature #3 companion)
+      'export_analytics': 'Export anonymized records',
+      'export_analytics_subtitle': 'Share the research JSONL file',
+      'export_analytics_empty':
+          'No records yet — consent is captured per follow-up.',
 },
 
     // ─── HINDI ────────────────────────────────────────────────

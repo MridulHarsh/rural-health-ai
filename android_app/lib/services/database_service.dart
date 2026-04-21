@@ -8,10 +8,14 @@ import 'inventory_service.dart';
 import 'mch_service.dart';
 
 /// Local SQLite database for patient records. PII columns (patient_name,
-/// voice_transcript, notes) are encrypted at rest via [EncryptionService].
+/// voice_transcript, notes, abha_id, abha_address, outcome free-text) are
+/// encrypted at rest via [EncryptionService].
 class DatabaseService {
   static Database? _db;
-  static const int _schemaVersion = 2; // 1 -> 2: household_id on assessments
+  // Schema versions:
+  //   1 -> 2: household_id on assessments
+  //   2 -> 3: abha_id + abha_address on assessments; followup_outcomes table
+  static const int _schemaVersion = 3;
 
   static Future<Database> get database async {
     if (_db != null) return _db!;
@@ -34,6 +38,8 @@ class DatabaseService {
             patient_name TEXT,
             patient_age INTEGER,
             patient_gender TEXT,
+            abha_id TEXT,
+            abha_address TEXT,
             symptoms TEXT,
             vitals TEXT,
             conditions TEXT,
@@ -45,6 +51,7 @@ class DatabaseService {
             created_at TEXT
           )
         ''');
+        await _createFollowupOutcomesTable(db);
         await InventoryService.ensureSchema(db);
         await MchService.ensureSchema(db);
       },
@@ -55,10 +62,43 @@ class DatabaseService {
                 'ALTER TABLE assessments ADD COLUMN household_id TEXT');
           } catch (_) {/* column may exist */}
         }
+        if (oldV < 3) {
+          // ABHA fields are nullable — pre-existing rows stay valid as NULL.
+          for (final col in ['abha_id', 'abha_address']) {
+            try {
+              await db.execute(
+                  'ALTER TABLE assessments ADD COLUMN $col TEXT');
+            } catch (_) {/* column may exist */}
+          }
+          await _createFollowupOutcomesTable(db);
+        }
         await InventoryService.ensureSchema(db);
         await MchService.ensureSchema(db);
       },
     );
+  }
+
+  /// followup_outcomes schema. PII fields (actual_diagnosis, treatment_given,
+  /// notes) are AES-GCM envelopes; enum fields and the consent flag stay
+  /// plaintext so the analytics exporter can read them without the key.
+  static Future<void> _createFollowupOutcomesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS followup_outcomes(
+        id TEXT PRIMARY KEY,
+        assessment_id TEXT NOT NULL,
+        followup_date TEXT NOT NULL,
+        actual_diagnosis TEXT,
+        treatment_given TEXT,
+        adherence TEXT NOT NULL,
+        outcome_status TEXT NOT NULL,
+        notes TEXT,
+        consent_to_share INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(assessment_id) REFERENCES assessments(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_followup_assessment ON followup_outcomes(assessment_id)');
   }
 
   /// Save an assessment record. PII fields are encrypted transparently.
@@ -74,6 +114,13 @@ class DatabaseService {
             data['patient']?['name'] ?? 'Unknown'),
         'patient_age': data['patient']?['age'] ?? 0,
         'patient_gender': data['patient']?['gender'] ?? '',
+        // ABHA identifiers are PII under DPDP — store encrypted. Patient may
+        // consent to sharing with a specific HIU later; that's a re-share
+        // action, not a reason to leave the value plaintext on disk.
+        'abha_id':
+            EncryptionService.encryptString(data['patient']?['abhaId']),
+        'abha_address':
+            EncryptionService.encryptString(data['patient']?['abhaAddress']),
         'symptoms': jsonEncode(data['symptoms'] ?? []),
         'vitals': jsonEncode(data['vitals'] ?? {}),
         'conditions': jsonEncode(data['conditions'] ?? []),
@@ -105,6 +152,8 @@ class DatabaseService {
         'patientName': _safeDecrypt(row['patient_name'] as String?),
         'patientAge': row['patient_age'],
         'patientGender': row['patient_gender'],
+        'abhaId': _safeDecrypt(row['abha_id'] as String?),
+        'abhaAddress': _safeDecrypt(row['abha_address'] as String?),
         'symptoms': _safeDecode(row['symptoms'], fallback: const []),
         'vitals': _safeDecode(row['vitals'], fallback: const {}),
         'conditions': _safeDecode(row['conditions'], fallback: const []),
