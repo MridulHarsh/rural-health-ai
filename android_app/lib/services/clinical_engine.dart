@@ -103,13 +103,21 @@ class ClinicalEngine {
     // A patient reporting "fever" should partially match diseases expecting
     // "high_fever" or "mild_fever". We do NOT auto-promote fever → high_fever;
     // that requires vitals evidence (handled in _injectVitalSymptoms).
-    if (symptoms.contains('fever') ||
-        symptoms.contains('high_fever') ||
-        symptoms.contains('mild_fever')) {
-      symptoms.addAll(['fever', 'mild_fever']);
-    }
-    if (symptoms.contains('high_fever')) {
+    //
+    // CRITICAL: when `high_fever` is explicitly reported (chip or temp ≥104°F),
+    // do NOT also inject `mild_fever`. The previous unconditional addAll let
+    // a febrile child score partial-credit on every mild-illness profile
+    // (common_cold, acute_sinusitis, bronchitis, dental_caries), diluting the
+    // ranking at exactly the time a severe differential should dominate.
+    final hasHighFever = symptoms.contains('high_fever');
+    final hasAnyFever = hasHighFever ||
+        symptoms.contains('fever') ||
+        symptoms.contains('mild_fever');
+    if (hasAnyFever) {
       symptoms.add('fever');
+    }
+    if (hasAnyFever && !hasHighFever) {
+      symptoms.add('mild_fever');
     }
 
     // Expand runny_nose / rhinorrhea equivalence.
@@ -246,10 +254,12 @@ class ClinicalEngine {
         final match = _fuzzyMatchSymptom(key);
         if (match != null) {
           normalized.add(match);
-        } else {
-          // Keep it anyway — might match a disease profile directly
-          normalized.add(key);
         }
+        // If no match, DROP the token. Previously we kept unknown keys in
+        // hopes a DiseaseProfile's symptomProfile would have the raw key,
+        // but profiles MUST use canonical symptomSystemMap keys (CLAUDE.md
+        // rule), so unknowns were pure noise — they inflated `totalMatched`
+        // counts nowhere and occasionally leaked into reasoning strings.
       }
     }
 
@@ -275,20 +285,36 @@ class ClinicalEngine {
   }
 
   String? _fuzzyMatchSymptom(String input) {
-    // Simple substring matching against known symptoms
+    // Substring matching against known symptoms. Requires input length ≥ 5
+    // to avoid spurious matches. At length 4, a token like "pain" bound to
+    // whichever *_pain SSM key iterated first (36 candidates in the map —
+    // non-deterministic). Raising the floor from 4 to 5 matches the Latin
+    // threshold in `fuzzy_symptom_matcher.dart` and eliminates the worst
+    // ambiguity cases. Native-script (hi/ta/bn/…) phrases route through
+    // symptomAliases before they ever reach this path.
+    if (input.length < 5) return null;
+
     final allKnown = <String>{
       ...symptomSystemMap.keys,
       ...symptomAliases.keys,
     };
 
-    // Exact substring match
+    // Ambiguity guard: if the input substring-contains (or is contained by)
+    // MULTIPLE known SSM / alias keys, we can't deterministically pick one —
+    // return null and let the token be dropped. Previously the first match
+    // in iteration order won, which made "pain" → "abdominal_pain" silently
+    // correct some of the time and wrong others. Ambiguous-drop is honest.
+    String? firstMatch;
+    int matchCount = 0;
     for (final known in allKnown) {
+      if (known.length < 5) continue;
       if (known.contains(input) || input.contains(known)) {
-        return symptomAliases[known] ?? known;
+        firstMatch ??= symptomAliases[known] ?? known;
+        matchCount++;
+        if (matchCount > 1) return null;
       }
     }
-
-    return null;
+    return firstMatch;
   }
 
   void _injectVitalSymptoms(Set<String> symptoms, Map<String, double>? vitals) {
@@ -474,7 +500,15 @@ class ClinicalEngine {
     score += occasionalCoverage * 0.05; // 5% weight
 
     // D) Prevalence prior — "common things are common"
-    score += disease.prevalence * 0.15; // 15% weight
+    // GATED on actual match. Previously this added `prevalence * 0.15`
+    // unconditionally, so a rare-but-present occasional-symptom hit on a
+    // 1.0-prevalence profile (e.g. `fatigue` alone → anemia) could land the
+    // score at 0.15+ and rank above more specific differentials. Now the
+    // prevalence floor only applies when the patient presents with at least
+    // one cardinal or common symptom of the disease.
+    if (matchedCardinal.isNotEmpty || matchedCommon.isNotEmpty) {
+      score += disease.prevalence * 0.15; // 15% weight
+    }
 
     // E) Specificity bonus — if the patient's symptoms are mostly explained
     // by this disease, that's better than a disease that only explains 1 symptom.
@@ -522,12 +556,21 @@ class ClinicalEngine {
 
     // ── ML confidence integration (optional boost) ──
     // ML acts as a tiebreaker / confidence boost, not the primary signal.
-    if (mlConfidence != null && mlConfidence > 0.1) {
-      // ML provides a multiplier of 1.0 to 1.5
-      // Strong ML confidence (>0.5) gives meaningful boost
-      // Weak ML confidence (<0.2) gives almost no boost
-      double mlBoost = 1.0 + (mlConfidence * 0.5);
-      score *= mlBoost;
+    // The underlying MLP-vs-RF agreement on held-out data is ~0.55, so the ML
+    // signal is noisy. Cap the max boost at 1.25× (mlConfidence=1.0) instead
+    // of 1.5× — this keeps ML as a tiebreaker without letting it flip a
+    // better-reasoned clinical ranking on a single confident logit.
+    //
+    // Clamp mlConfidence to [0, 1] before use. Incoming confidences from
+    // `MLService._getMLConfidences` are already softmax probabilities so
+    // should never exceed 1.0, but defensive clamping also floors accidental
+    // negatives (which would DEFLATE the score) at 0 without special-casing.
+    if (mlConfidence != null) {
+      final clamped = mlConfidence.clamp(0.0, 1.0);
+      if (clamped > 0.1) {
+        double mlBoost = 1.0 + (clamped * 0.25);
+        score *= mlBoost;
+      }
     }
 
     // Clamp final score
@@ -600,7 +643,11 @@ class ClinicalEngine {
     // is unchanged.
     if (age != null && (age < 5 || age > 65)) {
       if (risk == ClinicalRisk.normal) risk = ClinicalRisk.moderate;
-      if (risk == ClinicalRisk.moderate && cardinalCoverage > 0.3) {
+      // Threshold tightened 0.3 → 0.25 so a single cardinal match on a
+      // 4-cardinal profile (0.25 exactly) still escalates for vulnerable
+      // ages. On a 4-cardinal febrile profile, one matched cardinal lands
+      // at 0.25 which was previously JUST below the gate.
+      if (risk == ClinicalRisk.moderate && cardinalCoverage >= 0.25) {
         risk = ClinicalRisk.urgent;
       }
     }

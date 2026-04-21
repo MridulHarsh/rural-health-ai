@@ -90,17 +90,25 @@ class SpecialistModelsService {
     return results;
   }
 
+  /// Normalize a feature / vitals key to a canonical form: lowercase, trim,
+  /// collapse ANY Unicode whitespace (including non-breaking space U+00A0
+  /// which appears in 3 of 9 liver feature names) to underscores.
+  /// Using `replaceAll(' ', '_')` only handles ASCII 0x20 and silently
+  /// dropped those features from the lookup path.
+  static String _canonicalKey(String s) =>
+      s.toLowerCase().trim().replaceAll(RegExp(r'\s+'), '_');
+
   SpecialistScreening? _run(_ModelDef m, Map<String, dynamic> data) {
     // Dispose nulls out the interpreter AND flips m.loaded=false; check both
     // so a screenAll call racing with app shutdown can't hit a closed handle.
     if (m.interpreter == null || !m.loaded || !_initialized) return null;
     final nd = <String, dynamic>{};
-    data.forEach((k, v) => nd[k.toLowerCase().replaceAll(' ', '_')] = v);
+    data.forEach((k, v) => nd[_canonicalKey(k)] = v);
 
     int matched = 0;
     final vals = <double>[];
     for (final f in m.features) {
-      final k = f.toLowerCase().replaceAll(' ', '_');
+      final k = _canonicalKey(f);
       if (nd.containsKey(k)) {
         final v = nd[k];
         if (v is num) { vals.add(v.toDouble()); matched++; }
@@ -183,12 +191,24 @@ class SpecialistModelsService {
   /// Labels indicating no disease / negative class / safe outcome.
   /// Checked FIRST because some positive terms are substrings of negative ones
   /// (e.g., "notckd" contains "ckd"; "low risk" must not match "high" logic).
+  ///
+  /// Matches "low" only as a standalone token — prevents accidental matches
+  /// on unrelated substrings like "lower", "slow", "follow". No current class
+  /// label hits those forms, but the previous loose `contains('low')` would
+  /// flip future labels silently.
   bool _isLowRiskLabel(String l) {
-    return l == '0' ||
-        l == '2' ||           // liver ILPD: "2" = no disease
-        l.startsWith('not') || // "notckd"
-        l.contains('negative') ||
-        l.contains('low');
+    if (l == '0' || l == '2') return true; // liver ILPD: "2" = no disease
+    if (l.startsWith('not')) return true; // "notckd"
+    if (l.contains('negative')) return true;
+    if (l == 'low' || l == 'lowrisk') return true;
+    if (l.startsWith('low ') || l.startsWith('low_')) return true;
+    if (l.endsWith(' low') || l.endsWith('_low')) return true;
+    if (l.contains('low risk') ||
+        l.contains('low_risk') ||
+        l.contains('low-risk')) {
+      return true;
+    }
+    return false;
   }
 
   /// Labels indicating intermediate severity.
@@ -215,10 +235,18 @@ class SpecialistModelsService {
     return 0;
   }
 
+  /// Map captured ASHA vitals to the union of feature names expected by every
+  /// bundled specialist model. Keys are written in multiple conventions so the
+  /// (case-insensitive, whitespace-collapsed) `_canonicalKey` matcher inside
+  /// `_run` picks them up regardless of the JSON's source casing.
+  ///
+  /// Derived fields (hypertension, heart_disease default) are marked in-line
+  /// because they affect coverage math — see the doc comment on each.
   static Map<String, dynamic> buildFromVitals({
     int? age, String? sex, String? bp,
     double? temperature, int? heartRate, int? spo2,
     double? weight, double? height,
+    bool? knownHeartDisease,
   }) {
     final d = <String, dynamic>{};
     if (age != null) { d['age'] = age; d['Age'] = age; }
@@ -226,11 +254,20 @@ class SpecialistModelsService {
       d['sex'] = sex.toLowerCase() == 'm' || sex.toLowerCase() == 'male' ? 1 : 0;
       d['gender'] = d['sex'];
     }
+    double? sys;
+    double? dia;
     if (bp != null && bp.contains('/')) {
       final p = bp.split('/');
-      final s = double.tryParse(p[0]); final di = double.tryParse(p[1]);
-      if (s != null) { d['ap_hi'] = s; d['systolicBP'] = s; d['trestbps'] = s; }
-      if (di != null) { d['ap_lo'] = di; d['diastolicBP'] = di; }
+      sys = double.tryParse(p[0]);
+      dia = double.tryParse(p[1]);
+      if (sys != null) {
+        d['ap_hi'] = sys;
+        d['systolicBP'] = sys;
+        d['trestbps'] = sys;
+        // Kidney dataset uses the bare literal `bp` key for systolic.
+        d['bp'] = sys;
+      }
+      if (dia != null) { d['ap_lo'] = dia; d['diastolicBP'] = dia; }
     }
     if (temperature != null) { d['BodyTemp'] = temperature; }
     if (heartRate != null) { d['HeartRate'] = heartRate; d['thalach'] = heartRate; }
@@ -239,6 +276,28 @@ class SpecialistModelsService {
       d['bmi'] = weight / (h * h);
       d['BMI'] = d['bmi'];
     }
+
+    // ── Derived flags ──
+    // `hypertension` is a binary flag in the diabetes & stroke datasets
+    // (1 = diagnosed or measured hypertensive). We synthesize it honestly
+    // from the observed BP: a single elevated reading (≥140/90 per JNC-7
+    // stage-1 cut) is a proxy, not a diagnosis, but it's strictly better
+    // than zero-filling. If BP wasn't captured we leave the field absent
+    // so `_run` reports it as missing in `featureCoverage`.
+    if (sys != null || dia != null) {
+      d['hypertension'] =
+          ((sys ?? 0) >= 140 || (dia ?? 0) >= 90) ? 1 : 0;
+    }
+
+    // `heart_disease` is a known-history flag. Default to 0 (no known
+    // history), overridable via the optional param. This is a "status"
+    // default — conceptually different from defaulting a lab value like
+    // glucose. An ASHA worker can reasonably answer "patient has no
+    // recorded heart disease" with 0; they cannot reasonably guess a
+    // fasting glucose. Similar reasoning excludes HbA1c/chol/urinalysis
+    // defaults — those stay missing and correctly lower featureCoverage.
+    d['heart_disease'] = (knownHeartDisease ?? false) ? 1 : 0;
+
     return d;
   }
 

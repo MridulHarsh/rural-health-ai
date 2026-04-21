@@ -2,10 +2,10 @@
   "Age of the patient",
   "Total Bilirubin",
   "Direct Bilirubin",
-  "\u00a0Alkphos Alkaline Phosphotase",
-  "\u00a0Sgpt Alamine Aminotransferase",
+  "Alkphos Alkaline Phosphotase",
+  "Sgpt Alamine Aminotransferase",
   "Sgot Aspartate Aminotransferase",
   "Total Protiens",
-  "\u00a0ALB Albumin",
+  "ALB Albumin",
   "A/G Ratio Albumin and Globulin Ratio"
 ]

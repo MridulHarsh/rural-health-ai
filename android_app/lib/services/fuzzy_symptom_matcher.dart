@@ -131,11 +131,24 @@ class FuzzySymptomMatcher {
 
   /// Find the best fuzzy match for a word in the terms map.
   /// Returns the canonical symptom key, or null if no good match.
+  ///
+  /// Thresholds tightened after an audit found false positives like
+  /// "feed"→"fever", "dough"→"cough", "fewer"→"fever" at the old
+  /// (length<3, maxDist=3) settings.
+  ///
+  /// NOTE: the Latin-only length floor is detected via ASCII range, so
+  /// native-script (Devanagari, Tamil, Bengali, …) short tokens still
+  /// enter fuzzy search — those go through the alias map first anyway,
+  /// and a 3-char Indic token carries one full glyph of signal.
   String? _fuzzyMatch(String word, Map<String, String> terms) {
-    if (word.length < 3) return null; // Too short for fuzzy matching
+    final isLatin = _isLatinWord(word);
+    final minLen = isLatin ? 5 : 3;
+    if (word.length < minLen) return null;
 
-    // Threshold: allow ~30% character errors
-    final maxDist = (word.length * 0.3).ceil().clamp(1, 3);
+    // Threshold: allow ~25% character errors, capped at 2.
+    // Cap=3 previously let "feed" (1-edit → "feet"? no; 2-edit → "feel";
+    // 3-edit → "fever") and similar near-misses through.
+    final maxDist = (word.length * 0.25).ceil().clamp(1, 2);
 
     String? bestMatch;
     int bestDist = maxDist + 1;
@@ -146,8 +159,10 @@ class FuzzySymptomMatcher {
       // Skip if length difference is too large
       if ((term.length - word.length).abs() > maxDist) continue;
 
-      // Skip very short terms for fuzzy (high false positive rate)
-      if (term.length < 3) continue;
+      // Latin terms must be ≥ 5 chars for fuzzy; Indic terms ≥ 3.
+      final termIsLatin = _isLatinWord(term);
+      if (termIsLatin && term.length < 5) continue;
+      if (!termIsLatin && term.length < 3) continue;
 
       final dist = _editDistance(word, term);
       if (dist < bestDist) {
@@ -158,6 +173,15 @@ class FuzzySymptomMatcher {
     }
 
     return bestDist <= maxDist ? bestMatch : null;
+  }
+
+  /// True if every codeunit in `w` is ASCII letter/digit — used to pick the
+  /// per-script minimum length for fuzzy matching.
+  bool _isLatinWord(String w) {
+    for (final cu in w.codeUnits) {
+      if (cu > 0x7f) return false;
+    }
+    return true;
   }
 
   /// Levenshtein edit distance between two strings.

@@ -1,5 +1,5 @@
 // ml_service.dart (updated with specialist models + malaria)
-import 'dart:typed_data';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -43,6 +43,36 @@ class MLService {
   static const String skinLowConfidenceLabel =
       'Low confidence — confirm at PHC';
 
+  /// Per-class floor for the skin model, keyed by the exact class name from
+  /// skin_disease_model_classes.json. Driven by per-class recall in the
+  /// bundled model metadata: classes with recall < 0.30 are effectively
+  /// pinned at 1.1 (impossible) so they can NEVER be surfaced as a
+  /// confident prediction — the sentinel "confirm at PHC" label is always
+  /// shown instead. Higher-recall classes use tighter-than-uniform floors
+  /// scaled to their clinical-harm-on-miss (Neoplastic and Autoimmune miss
+  /// a cancer / systemic disease, so they get a stiffer bar). Any class
+  /// not in this map falls back to [skinConfidenceFloor].
+  static const Map<String, double> skinPerClassFloor = {
+    'Bacterial Infection': 1.1,      // recall 0.09 → never trust
+    'Fungal Infection': 0.55,        // recall 0.60 → standard floor
+    'Viral Infection': 0.70,         // recall 0.34 → stiff
+    'Parasitic and Contact': 0.75,   // recall 0.24
+    'Inflammatory and Eczema': 0.55, // recall 0.52 → standard
+    'Allergic and Drug Reaction': 0.70, // recall 0.28
+    'Neoplastic or Tumor': 0.75,     // biopsy-referral stakes on miss
+    'Autoimmune or Systemic': 0.80,  // recall 0.22 + systemic miss cost
+  };
+
+  /// `true` once loaded metadata indicates the skin model bakes
+  /// `mobilenet_v2.preprocess_input` into its graph, which expects raw
+  /// [0, 255] pixels. In that case the Dart preprocessor's [0, 1] output
+  /// must be rescaled before inference. The next-generation skin model
+  /// (trained by the fixed `kaggle_skin_model.py`) will NOT bake this in
+  /// and will expect [0, 1] — gating on this flag rather than `type == 'skin'`
+  /// means dropping the new model into assets/ will not silently produce
+  /// saturated inputs.
+  bool _skinNeedsLegacyPreprocess = false;
+
   // ── Tabular TFLite (optional ML signal) ──
   Interpreter? _tabularModel;
   List<String>? _symptomList;
@@ -68,18 +98,26 @@ class MLService {
       // Load tabular model (optional — may not exist)
       try {
         _tabularModel = await Interpreter.fromAsset('assets/models/disease_model.tflite');
+        // Feature / class JSON files store the raw training names (spaces,
+        // mixed case). Normalize to the same canonical form the lookup path
+        // uses so `indexOf(normalized)` can actually find them; without
+        // this, any feature with a space in its name (283 of 328 entries in
+        // disease_model_features.json) was silently unreachable — the model
+        // saw all zeros for 86% of possible inputs.
+        String canon(String s) =>
+            s.toLowerCase().replaceAll(RegExp(r'\s+'), '_');
         // Try old naming first
         try {
           final sj = await rootBundle.loadString('assets/models/symptom_list.json');
-          _symptomList = List<String>.from(jsonDecode(sj));
+          _symptomList = List<String>.from(jsonDecode(sj)).map(canon).toList();
           final dj = await rootBundle.loadString('assets/models/disease_list.json');
-          _diseaseList = List<String>.from(jsonDecode(dj));
+          _diseaseList = List<String>.from(jsonDecode(dj)).map(canon).toList();
         } catch (_) {
           // Try new naming
           final sj = await rootBundle.loadString('assets/models/disease_model_features.json');
-          _symptomList = List<String>.from(jsonDecode(sj));
+          _symptomList = List<String>.from(jsonDecode(sj)).map(canon).toList();
           final dj = await rootBundle.loadString('assets/models/disease_model_classes.json');
-          _diseaseList = List<String>.from(jsonDecode(dj));
+          _diseaseList = List<String>.from(jsonDecode(dj)).map(canon).toList();
         }
       } catch (e) {
         debugPrint('[MLService] Tabular TFLite not loaded (optional): $e');
@@ -123,36 +161,187 @@ class MLService {
     );
   }
 
+  /// Minimum per-class softmax probability below which we discard the ML
+  /// signal. The underlying general-disease TFLite is a 754-way MLP distilled
+  /// from a 0.80-accuracy RF with MLP↔RF agreement of only 0.55 — which means
+  /// the per-class tails are noisy. At a 0.05 gate (~40× the uniform prior),
+  /// we were admitting dozens of low-quality "hits" that downstream boosting
+  /// applied as tiebreakers. 0.20 keeps only the confident tail.
+  static const double _mlConfidenceThreshold = 0.20;
+
+  /// ML class label (post-canonicalization) → DiseaseProfile id to also boost.
+  /// The general 754-class model uses verbose Kaggle labels ("dengue_fever",
+  /// "chronic_obstructive_pulmonary_disease_(copd)"), while curated profile
+  /// IDs are short ("dengue", "copd"). Direct-ID overlap is ~99/161; this
+  /// table raises overlap to ~130/161 by aliasing the obvious pairs.
+  ///
+  /// Keys MUST be in canonicalized form (lowercase, whitespace→underscore,
+  /// parens preserved) because `_diseaseList` entries are already
+  /// canonicalized at load time.
+  ///
+  /// Values MUST be existing DiseaseProfile IDs — an alias to a non-existent
+  /// id silently contributes no boost (harmless but wasteful).
+  static const Map<String, String> _mlClassToProfileAlias = {
+    'acne': 'acne_disease',
+    'acute_kidney_injury': 'aki',
+    'anxiety': 'anxiety_disorders',
+    'benign_prostatic_hyperplasia_(bph)': 'bph',
+    'carpal_tunnel_syndrome': 'carpal_tunnel',
+    'cataract': 'cataract_disease',
+    'chronic_obstructive_pulmonary_disease_(copd)': 'copd',
+    'dengue_fever': 'dengue',
+    'deep_vein_thrombosis_(dvt)': 'dvt',
+    'flu': 'seasonal_flu',
+    'gastroesophageal_reflux_disease_(gerd)': 'gerd',
+    'glaucoma': 'glaucoma_chronic',
+    'guillain_barre_syndrome': 'guillain_barre',
+    'heart_attack': 'heart_attack_acute',
+    'human_immunodeficiency_virus_infection_(hiv)': 'hiv',
+    'hypothyroidism': 'hypothyroid',
+    'infectious_gastroenteritis': 'gastroenteritis',
+    'irritable_bowel_syndrome': 'ibs',
+    'kidney_stone': 'kidney_stones',
+    'breast_infection_(mastitis)': 'mastitis',
+    'obsessive_compulsive_disorder_(ocd)': 'ocd',
+    "otitis_externa_(swimmer's_ear)": 'otitis_externa',
+    'acute_pancreatitis': 'pancreatitis',
+    'polycystic_ovarian_syndrome_(pcos)': 'pcos',
+    'peripheral_arterial_disease': 'pad',
+    'pinworm_infection': 'pinworm',
+    'post-traumatic_stress_disorder_(ptsd)': 'ptsd',
+    'shingles_(herpes_zoster)': 'shingles',
+    'obstructive_sleep_apnea_(osa)': 'sleep_apnea',
+    'vaginal_yeast_infection': 'vaginal_yeast',
+    'viral_warts': 'warts',
+    'hypercholesterolemia': 'high_cholesterol',
+    // ── Extensions (2026-04-21 accuracy pass) ─────────────────────────
+    // Apostrophe-mismatch normalization — Kaggle labels use possessive
+    // punctuation ("parkinson_disease"), our terse IDs use plain
+    // ("parkinsons_disease"). Each extra alias reclaims ~1 DiseaseProfile
+    // of ML-boost coverage.
+    'parkinson_disease': 'parkinsons_disease',
+    'crohn_disease': 'crohns_disease',
+    // Condition-family umbrellas — multiple verbose ML classes collapse to
+    // one curated profile. Preserves the strongest fused score via the
+    // existing max-merge logic in `_getMLConfidences`.
+    'acute_bronchitis': 'bronchitis',
+    'hypertension_of_pregnancy': 'hypertension',
+    'malignant_hypertension': 'hypertension',
+    'gestational_diabetes': 'diabetes',
+    'acute_otitis_media': 'otitis_media',
+    'chronic_otitis_media': 'otitis_media',
+    // Naming-convention normalization (terse profile IDs are plural/generic)
+    'fungal_infection_of_the_skin': 'fungal_skin',
+    'urinary_tract_infection': 'uti',
+    'hyperthyroidism': 'hyperthyroid',
+    'premenstrual_tension_syndrome': 'pms',
+    'coronary_atherosclerosis': 'coronary_artery_disease',
+  };
+
+  /// Minimum number of recognized features in the 328-dim input vector below
+  /// which we skip ML inference entirely. At 1–2 features set the model's
+  /// argmax is basically the class popularity prior (1/754 ≈ 0.0013 uniform),
+  /// which gets amplified by the downstream boost and introduces noise
+  /// without adding signal. Three features gives enough disambiguation
+  /// content for the trained classifier to produce meaningful logits.
+  static const int _minMLFeatures = 3;
+
+  /// Top-1 confidence floor — if the strongest *fused* class falls under this,
+  /// the model has nothing to say and we return null (no boosts applied to any
+  /// profile). Prevents garbage-in-garbage-out from e.g. an adversarial single
+  /// symptom input.
+  static const double _minTop1Confidence = 0.20;
+
   Map<String, double>? _getMLConfidences(List<String> symptoms) {
     if (_tabularModel == null || _symptomList == null || _diseaseList == null) return null;
     try {
       final input = List<double>.filled(_symptomList!.length, 0.0);
+      int setCount = 0;
       for (final symptom in symptoms) {
-        final normalized = symptom.toLowerCase().replaceAll(' ', '_');
+        final normalized = symptom.toLowerCase().replaceAll(RegExp(r'\s+'), '_');
         final idx = _symptomList!.indexOf(normalized);
-        if (idx >= 0) input[idx] = 1.0;
+        if (idx >= 0 && input[idx] == 0.0) {
+          input[idx] = 1.0;
+          setCount++;
+        }
       }
-      // Model may have batch_size > 1; allocate matching shape
+      if (setCount < _minMLFeatures) return null;
+
+      // Model may have batch_size > 1; allocate matching shape. For the
+      // bundled 754-class model the shape is [2, 754] — the export packs the
+      // MLP logits in row 0 and the RF probability estimates in row 1.
       final outputShape = _tabularModel!.getOutputTensor(0).shape;
       final batchSize = outputShape[0];
       final numClasses = outputShape[1];
       final output = List.generate(batchSize, (_) => List<double>.filled(numClasses, 0.0));
-      _tabularModel!.run(
-        [Float64List.fromList(input).buffer.asFloat32List()],
-        output,
-      );
-      final flatOutput = output[0]; // Use first batch element
-      final confidences = <String, double>{};
-      // Defensive: model output width and disease-list length should match,
-      // but a mismatched asset shouldn't crash inference — iterate to the
-      // shorter of the two.
-      final len = flatOutput.length < _diseaseList!.length
-          ? flatOutput.length
+      // tflite_flutter accepts nested List<List<double>> for float32 input
+      // tensors and does the cast internally. The previous implementation
+      // used `Float64List.fromList(input).buffer.asFloat32List()`, which
+      // reinterprets the raw 8-byte doubles as pairs of 4-byte floats —
+      // producing a tensor TWICE the expected length filled with garbage
+      // bit-patterns. The model saw random input on every inference.
+      _tabularModel!.run([input], output);
+
+      // Fuse MLP (row 0) and RF (row 1) when both are present. The geometric
+      // mean rewards agreement (high only when BOTH rows are high) and zeros
+      // out when either row is zero — this is precisely what we want given
+      // the 0.55 published MLP↔RF agreement: most disagreements indicate
+      // model uncertainty and should be discarded. An agreement scalar then
+      // reweights the fused probability based on row similarity (1.0 when
+      // mlp==rf, 0.5 when maximally split).
+      final useFusion = output.length >= 2;
+      final mlpProbs = output[0];
+      final rfProbs = useFusion ? output[1] : null;
+      final len = mlpProbs.length < _diseaseList!.length
+          ? mlpProbs.length
           : _diseaseList!.length;
+
+      // First pass: compute fused per-class scores, then find the top-1 so we
+      // can apply the all-or-nothing sanity gate before emitting anything.
+      final fused = List<double>.filled(len, 0.0);
+      double topFused = 0.0;
       for (int i = 0; i < len; i++) {
-        if (flatOutput[i] > 0.05) {
-          confidences[_diseaseList![i].toLowerCase().replaceAll(' ', '_')] =
-              flatOutput[i];
+        final mlp = mlpProbs[i].clamp(0.0, 1.0).toDouble();
+        if (useFusion) {
+          final rf = rfProbs![i].clamp(0.0, 1.0).toDouble();
+          final geo = math.sqrt(mlp * rf);
+          if (geo <= 0.0) continue;
+          final mx = math.max(mlp, rf);
+          final agree = mx > 0 ? math.min(mlp, rf) / mx : 0.0;
+          // Agreement scalar lives in [0.5, 1.0]: 0.5 when a row is zero,
+          // 1.0 when rows match exactly. Pure fused * (0.5 + 0.5*agree)
+          // keeps the geometric mean as the floor and only bumps it up to
+          // the fused value when both rows agree.
+          fused[i] = geo * (0.5 + 0.5 * agree);
+        } else {
+          fused[i] = mlp;
+        }
+        if (fused[i] > topFused) topFused = fused[i];
+      }
+
+      // If the strongest fused class is below the sanity floor, the model has
+      // nothing confident to contribute — skip boosting all profiles. This
+      // prevents a low-quality prediction from applying 1.02× boosts across
+      // the board, which is noise dressed as signal.
+      if (topFused < _minTop1Confidence) return null;
+
+      final confidences = <String, double>{};
+      for (int i = 0; i < len; i++) {
+        final prob = fused[i];
+        if (prob < _mlConfidenceThreshold) continue;
+        // _diseaseList is already canonicalized at load time.
+        final mlKey = _diseaseList![i];
+        confidences[mlKey] = prob;
+        // Also record under the aliased profile id, preserving the max if
+        // multiple ML classes map to the same profile (e.g. malignant_
+        // hypertension + hypertension_of_pregnancy both alias to
+        // `hypertension`).
+        final profileId = _mlClassToProfileAlias[mlKey];
+        if (profileId != null) {
+          final existing = confidences[profileId];
+          if (existing == null || prob > existing) {
+            confidences[profileId] = prob;
+          }
         }
       }
       return confidences;
@@ -199,9 +388,35 @@ class MLService {
         'assets/models/skin_disease_model_classes.json',
       );
       _skinClasses = List<String>.from(jsonDecode(sj));
+
+      // Read input normalization convention from metadata. The current
+      // bundled model has `preprocess_input` baked into the graph, so the
+      // Dart side must rescale [0, 1] → [0, 255]. A retrained model that
+      // drops preprocess_input will report a different convention (e.g.
+      // "img/255.0 normalized [0,1]") and this flag will flip to false
+      // — no code change required on upgrade. Tolerates a missing
+      // metadata file to stay backwards-compatible.
+      try {
+        final metaJson = await rootBundle.loadString(
+          'assets/models/skin_disease_model_metadata.json',
+        );
+        final meta = jsonDecode(metaJson) as Map<String, dynamic>;
+        final norm = (meta['input_normalization'] as String? ?? '')
+            .toLowerCase();
+        _skinNeedsLegacyPreprocess =
+            norm.contains('preprocess_input') || norm.contains('[-1, 1]');
+      } catch (e) {
+        // If metadata is missing, assume the legacy convention — the
+        // current bundled model does bake preprocess_input, so the
+        // safer default is to keep the stopgap enabled.
+        _skinNeedsLegacyPreprocess = true;
+        debugPrint('[MLService] Skin metadata missing, keeping legacy preprocess: $e');
+      }
+
       debugPrint(
         '[MLService] Skin model loaded: ${_skinClasses!.length} classes '
-        '(below-gate model — confidence floor $skinConfidenceFloor)',
+        '(below-gate model — confidence floor $skinConfidenceFloor, '
+        'legacyPreprocess=$_skinNeedsLegacyPreprocess)',
       );
     } catch (e) {
       debugPrint('[MLService] Skin model load error: $e');
@@ -283,21 +498,10 @@ class MLService {
         (_) => List<double>.filled(classes!.length, 0.0),
       );
 
-      // Skin model preprocessing-range stopgap.
-      //
-      // eye/lung/malaria models were trained by train_images.py which feeds
-      // [0, 1]-normalized pixels (img/255.0). The current skin model was
-      // trained with mobilenet_v2.preprocess_input baked into the graph,
-      // which maps [0, 255] → [-1, 1] via true_divide(127.5)→subtract(1).
-      // Feeding [0, 1] inputs to it collapses every pixel near -1 and the
-      // model predicts noise.
-      //
-      // Stopgap: scale [0, 1] → [0, 255] before inference, so the baked-in
-      // preprocess_input receives what it expects. Cost is one pass of ~49k
-      // float multiplications (sub-millisecond). Next retrain should drop
-      // preprocess_input from the graph to match train_images.py's
-      // convention; when that lands, delete this branch.
-      final input = type == 'skin'
+      // Skin model preprocessing-range stopgap — gated on model metadata,
+      // not on `type == 'skin'`. See `_skinNeedsLegacyPreprocess` load path.
+      final needsLegacy = type == 'skin' && _skinNeedsLegacyPreprocess;
+      final input = needsLegacy
           ? imageData
               .map((row) => row
                   .map((px) => px.map((c) => c * 255.0).toList())
@@ -324,16 +528,21 @@ class MLService {
         ..sort((a, b) => b.value.compareTo(a.value));
 
       // Below-gate mitigation: prepend a low-confidence marker for skin
-      // predictions that fall under the floor. UI should display this
-      // sentinel as a "preliminary — confirm at PHC" banner and still
-      // allow the user to see the ranked alternatives beneath it.
-      if (type == 'skin' &&
-          results.isNotEmpty &&
-          results.first.value < skinConfidenceFloor) {
-        return [
-          MapEntry(skinLowConfidenceLabel, results.first.value),
-          ...results.take(3),
-        ];
+      // predictions that fall under the floor. Per-class floor table
+      // (skinPerClassFloor) is consulted first so clinically-catastrophic
+      // misses (Bacterial recall 0.09, Autoimmune recall 0.22) pin the
+      // floor at a value the model can never clear — guaranteeing the
+      // PHC-referral sentinel on those classes regardless of top-1 prob.
+      if (type == 'skin' && results.isNotEmpty) {
+        final topLabel = results.first.key;
+        final topProb = results.first.value;
+        final floor = skinPerClassFloor[topLabel] ?? skinConfidenceFloor;
+        if (topProb < floor) {
+          return [
+            MapEntry(skinLowConfidenceLabel, topProb),
+            ...results.take(3),
+          ];
+        }
       }
 
       return results.take(3).toList();
@@ -411,10 +620,12 @@ class MLService {
 
   void dispose() {
     _tabularModel?.close();
+    _skinModel?.close();
     _eyeModel?.close();
     _lungModel?.close();
     _malariaModel?.close();
     _tabularModel = null;
+    _skinModel = null;
     _eyeModel = null;
     _lungModel = null;
     _malariaModel = null;

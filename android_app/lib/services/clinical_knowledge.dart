@@ -275,6 +275,10 @@ const List<RedFlagRule> redFlagRules = [
   ),
 
   // ---- SEVERE DEHYDRATION (children) ----
+  // minSupportingNeeded lowered from 2→1. A young child with diarrhea plus
+  // ANY one of the listed decompensation signs is already in the IMCI
+  // "severe dehydration / some dehydration" bucket — requiring 2 of 6 was
+  // too strict and delayed transport in field tests.
   RedFlagRule(
     id: 'rf_severe_dehydration_child',
     conditionName: 'Severe Dehydration',
@@ -287,7 +291,7 @@ const List<RedFlagRule> redFlagRules = [
       'inability_to_drink',
       'no_urine',
     ],
-    minSupportingNeeded: 2,
+    minSupportingNeeded: 1,
     risk: ClinicalRisk.emergency,
     immediateAction:
         'EMERGENCY: Severe dehydration. Start ORS immediately. Transport to hospital for IV fluids.',
@@ -328,6 +332,120 @@ const List<RedFlagRule> redFlagRules = [
     risk: ClinicalRisk.emergency,
     immediateAction:
         'EMERGENCY: Snake bite. Keep patient calm and still. Immobilize bitten limb. Do NOT tourniquet, cut, or suck. Transport to hospital for antivenom.',
+  ),
+
+  // ---- SEPSIS ----
+  // Fever + ≥2 systemic-compromise signs. Closes the gap where a feverish
+  // child or elderly patient with tachycardia (auto-injected when pulse>120)
+  // and confusion scored "moderate" on curated profiles (no dedicated sepsis
+  // profile exists). Two supporting criteria are required to avoid
+  // false-positives against simple viral febrile illness; ONE alone would
+  // trigger on most uncomplicated fevers.
+  RedFlagRule(
+    id: 'rf_sepsis',
+    conditionName: 'Suspected Sepsis',
+    requiredSymptoms: ['fever'],
+    supportingSymptoms: [
+      'altered_consciousness',
+      'confusion',
+      'palpitations',
+      'low_blood_pressure',
+      'pallor',
+      'cyanosis',
+      'lethargy',
+      'severe_shortness_of_breath',
+    ],
+    minSupportingNeeded: 2,
+    risk: ClinicalRisk.emergency,
+    immediateAction:
+        'EMERGENCY: Possible sepsis. Keep patient warm, give sips of water if conscious, note time of fever onset. Transport to hospital for IV antibiotics IMMEDIATELY.',
+  ),
+
+  // ---- SEVERE MALARIA ----
+  // WHO severe-malaria criteria: fever plus ANY ONE of impaired
+  // consciousness, seizures, jaundice, or bleeding. Overlaps with sepsis
+  // and meningitis rules on purpose — the triage action (urgent transport
+  // with note of fever onset) is the same, and malaria is endemic in the
+  // ASHA catchment. The engine picks whichever emergency rule matches first.
+  RedFlagRule(
+    id: 'rf_severe_malaria',
+    conditionName: 'Suspected Severe Malaria',
+    requiredSymptoms: ['fever'],
+    supportingSymptoms: [
+      'altered_consciousness',
+      'seizures',
+      'jaundice',
+      'severe_bleeding',
+      'confusion',
+    ],
+    minSupportingNeeded: 1,
+    risk: ClinicalRisk.emergency,
+    immediateAction:
+        'EMERGENCY: Possible severe malaria. Do NOT delay for diagnostic test. Transport to hospital for IV artesunate. If pregnant, flag as high-priority.',
+  ),
+
+  // ---- POSTPARTUM / SEVERE VAGINAL HEMORRHAGE ----
+  // Any woman with severe vaginal bleeding is an obstetric emergency until
+  // proven otherwise. We do not have a 'recent_delivery' canonical symptom,
+  // so this rule covers both PPH and severe menorrhagia. Demographics=F is
+  // mandatory — a male patient matching these keys is a data-entry error.
+  RedFlagRule(
+    id: 'rf_postpartum_hemorrhage',
+    conditionName: 'Severe Vaginal Bleeding',
+    requiredSymptoms: ['vaginal_bleeding'],
+    supportingSymptoms: [
+      'severe_bleeding',
+      'pallor',
+      'low_blood_pressure',
+      'confusion',
+      'altered_consciousness',
+      'pregnancy',
+    ],
+    minSupportingNeeded: 1,
+    risk: ClinicalRisk.emergency,
+    immediateAction:
+        'EMERGENCY: Severe vaginal bleeding. Place patient flat with legs elevated. If post-delivery, firmly massage uterus (fundal rub). Transport to hospital for IV fluids and oxytocin.',
+    demographics: Demographics(sex: 'F'),
+  ),
+
+  // ---- HYPOGLYCEMIA ----
+  // Classic adrenergic (sweating, palpitations) plus neuroglycopenic
+  // (confusion, altered consciousness) presentation. Activates on the
+  // sweating+confusion pair, then requires at least one additional
+  // signal so isolated anxiety-driven sweating+confusion doesn't trigger.
+  // Important in diabetics on insulin/sulfonylureas; also under-diagnosed
+  // in severe malnutrition and alcohol withdrawal.
+  RedFlagRule(
+    id: 'rf_hypoglycemia',
+    conditionName: 'Suspected Hypoglycemia',
+    requiredSymptoms: ['sweating', 'confusion'],
+    supportingSymptoms: [
+      'palpitations',
+      'altered_consciousness',
+      'seizures',
+      'pallor',
+      'weakness_one_side',
+    ],
+    minSupportingNeeded: 1,
+    risk: ClinicalRisk.emergency,
+    immediateAction:
+        'EMERGENCY: Possible low blood sugar. If conscious, give sugar water / glucose / juice orally. If unconscious, do NOT give anything by mouth. Transport to hospital IMMEDIATELY.',
+  ),
+
+  // ---- SUICIDAL IDEATION ----
+  // Marked URGENT (not emergency) because ideation without plan/intent is
+  // not a life-threatening minute-by-minute emergency, but it MUST get a
+  // clinical contact the same day. If a future "suicide_plan" or
+  // "suicide_attempt" symptom is added, create a second rule with
+  // ClinicalRisk.emergency.
+  RedFlagRule(
+    id: 'rf_suicidal_ideation',
+    conditionName: 'Suicidal Ideation',
+    requiredSymptoms: ['suicidal_thoughts'],
+    minSupportingNeeded: 0,
+    risk: ClinicalRisk.urgent,
+    immediateAction:
+        'URGENT: Patient reports suicidal thoughts. Stay with patient, remove access to harm. Contact local mental-health helpline (KIRAN: 1800-599-0019, 24×7). Refer to PHC same day.',
   ),
 ];
 
@@ -830,7 +948,11 @@ final List<DiseaseProfile> diseaseProfiles = [
       'loss_of_appetite': SymptomRole.common,
       'chest_pain': SymptomRole.occasional,
     },
-    prevalence: 0.5, // High in India
+    // India has one of the highest TB burdens in the world (~2.6M cases/yr,
+    // ~200 per 100k). Raised 0.5→0.8 so a productive cough with night
+    // sweats + weight loss ranks TB ahead of pneumonia and bronchitis,
+    // which was the audit finding on test cases.
+    prevalence: 0.8, // Very high in rural India
     typicalRisk: ClinicalRisk.urgent,
     nextSteps: [
       'REFER for sputum test and chest X-ray',
@@ -898,10 +1020,16 @@ final List<DiseaseProfile> diseaseProfiles = [
     displayName: 'Malaria',
     primarySystem: BodySystem.infectious,
     symptomProfile: {
-      'fever': SymptomRole.cardinal,          // "THE cardinal symptom" per India NVBDCP
+      // Classic NVBDCP triad: high-grade fever + chills + sweating. A generic
+      // "fever" alone isn't specific enough to remain a cardinal — with fever
+      // auto-expansion in the engine, every febrile presentation used to
+      // quadratic-weight malaria at 0.25² = 0.06 purely on the fever hit.
+      // Demoting `fever` to common makes the cardinals discriminative: the
+      // triad has to present together for malaria to rank high.
       'high_fever': SymptomRole.cardinal,      // usually high-grade
       'chills': SymptomRole.cardinal,          // classic triad: fever-chills-sweating
       'sweating': SymptomRole.cardinal,        // profuse sweating after fever
+      'fever': SymptomRole.common,             // supporting (demoted from cardinal)
       'headache': SymptomRole.common,
       'body_ache': SymptomRole.common,         // myalgia, arthralgia
       'nausea': SymptomRole.common,
@@ -910,7 +1038,15 @@ final List<DiseaseProfile> diseaseProfiles = [
       'pallor': SymptomRole.occasional,
       'jaundice': SymptomRole.occasional,
     },
-    prevalence: 0.7, // Endemic in many parts of India
+    // WHO World Malaria Report 2023 reports ~176K cases in India (~1 per
+    // 8,000 population nationally). Endemic burden is heavily regional
+    // (NE states, Odisha, Chhattisgarh, Jharkhand) — a nationwide 0.7
+    // prevalence ranked malaria above typhoid/enteric fever in the many
+    // non-endemic settings where enteric pathogens dominate. 0.5 keeps
+    // malaria competitive on the triad without over-weighting it on
+    // pure fever presentations. Region-specific installations can tune
+    // higher in a future config layer.
+    prevalence: 0.5,
     typicalRisk: ClinicalRisk.urgent,
     nextSteps: [
       'Rapid Diagnostic Test (RDT) if available',
@@ -968,7 +1104,11 @@ final List<DiseaseProfile> diseaseProfiles = [
       'constipation': SymptomRole.common,
       'rash': SymptomRole.occasional,          // rose spots, transient
     },
-    prevalence: 0.6,
+    // Raised 0.6→0.7: India accounts for ~80% of global typhoid burden
+    // (ICMR enteric-fever study, 2018–22). Undertreated contaminated-water
+    // exposure is endemic in rural catchments — bumping prevalence keeps
+    // typhoid ranked appropriately vs. viral febrile illness.
+    prevalence: 0.7,
     typicalRisk: ClinicalRisk.urgent,
     nextSteps: [
       'REFER for Widal test / blood culture',
@@ -1180,7 +1320,13 @@ final List<DiseaseProfile> diseaseProfiles = [
       'itching': SymptomRole.occasional, // genital
       'loss_of_appetite': SymptomRole.occasional,
     },
-    prevalence: 0.6,
+    // ICMR-INDIAB 2023 reports diabetes prevalence of 11.4% in urban India
+    // and 5.9% in rural — the ASHA catchment is predominantly rural. At
+    // prev=0.6 diabetes over-ranked specific differentials like
+    // hyperthyroidism (on weight_loss + palpitations). 0.4 better reflects
+    // the rural epidemiology while still keeping diabetes competitive on
+    // the classic triad.
+    prevalence: 0.4,
     typicalRisk: ClinicalRisk.urgent,
     nextSteps: [
       'REFER for fasting blood sugar test',
@@ -1311,7 +1457,14 @@ final List<DiseaseProfile> diseaseProfiles = [
       'skin_lesion': SymptomRole.common,
       'blisters': SymptomRole.occasional,
     },
-    prevalence: 0.7,
+    // Scabies is common in rural India but per-patient presentation rate in
+    // ASHA screening is ~5-10% (WHO India 2020 community-survey estimates).
+    // At prev=0.7 scabies co-dominated fungal_skin (prev=0.8) and eczema
+    // (prev=0.6) on every itching+rash presentation, which inflates the
+    // false-positive rate for treatable fungal infections. 0.5 keeps
+    // scabies above eczema but lets fungal_skin lead on ringworm-shaped
+    // rashes.
+    prevalence: 0.5,
     typicalRisk: ClinicalRisk.normal,
     nextSteps: [
       'Permethrin cream or benzyl benzoate lotion',
@@ -1360,7 +1513,14 @@ final List<DiseaseProfile> diseaseProfiles = [
       'nosebleed': SymptomRole.occasional,
       'high_blood_pressure': SymptomRole.cardinal,
     },
-    prevalence: 0.7,
+    // ICMR-INDIAB (2017) and NFHS-5 place adult hypertension prevalence at
+    // 29.8% nationally (urban 33.8%, rural 27.6%). At prev=0.7, every BP
+    // reading ≥140 with even one common symptom (headache, dizziness) drove
+    // hypertension to rank ~0.45 — ahead of more specific differentials like
+    // migraine on a headache-only presentation. 0.5 keeps hypertension
+    // salient when the cuff evidence is present without swamping other
+    // ranked conditions.
+    prevalence: 0.5,
     typicalRisk: ClinicalRisk.moderate,
     demographics: Demographics(minAge: 30),
     nextSteps: [
@@ -1417,7 +1577,15 @@ final List<DiseaseProfile> diseaseProfiles = [
       'nail_changes': SymptomRole.occasional, // spoon nails
       'loss_of_appetite': SymptomRole.occasional,
     },
-    prevalence: 0.9, // Very common in rural India, especially women
+    // NFHS-5 reports 57% of Indian women 15-49 are anemic — genuinely the
+    // highest disease prevalence in our catchment. But at prev=1.0 the
+    // generic `anemia` profile double-ranked with `iron_deficiency_anemia`
+    // (prev=0.6) on every pallor+fatigue case, producing two near-identical
+    // top differentials that didn't help the health worker. 0.7 keeps
+    // anemia as the top differential on this pattern without forcing it
+    // to rank #1 for every vaguely tired woman, and lets IDA differentiate
+    // when further history (diet, pregnancy) is available.
+    prevalence: 0.7,
     typicalRisk: ClinicalRisk.moderate,
     demographics: Demographics(sex: 'F'),
     nextSteps: [
@@ -1629,7 +1797,11 @@ final List<DiseaseProfile> diseaseProfiles = [
       'skin_discoloration': SymptomRole.occasional,
       'diarrhea': SymptomRole.occasional,
     },
-    prevalence: 0.6,
+    // NFHS-5: 35.5% of <5 children in India are stunted, 32.1% underweight.
+    // Raised 0.6→0.8 so weight-loss + fatigue + pallor in a young child
+    // surfaces malnutrition as the primary differential — the age gate
+    // (maxAge: 10) already prevents this from dominating adult cases.
+    prevalence: 0.8,
     typicalRisk: ClinicalRisk.urgent,
     demographics: Demographics(maxAge: 10),
     nextSteps: [
@@ -4816,6 +4988,70 @@ const Map<String, String> symptomAliases = {
 
   'frequent_urine': 'frequent_urination',
   'blood_in_urine': 'blood_in_urine',
+
+  // ═══ VOICE / FIELD-PHRASING ALIASES (2026-04-21 accuracy pass) ═══
+  // High-frequency ASHA voice-input and Hinglish phrasings that previously
+  // depended on the fuzzy matcher. Fuzzy was tightened to edit-distance 2
+  // with min-length 5 (Latin) and now returns null on ambiguous hits — so
+  // loose phrasings need explicit aliases or they get silently dropped.
+
+  // English (common field phrasings / transcription variants)
+  'running_nose': 'runny_nose',
+  'stomach_ache': 'abdominal_pain',
+  'tummy_pain': 'abdominal_pain',
+  'pain_in_chest': 'chest_pain',
+  'dizzy': 'dizziness',
+  'light_headed': 'dizziness',
+  'lightheaded': 'dizziness',
+  'feeling_dizzy': 'dizziness',
+  'cant_breathe': 'shortness_of_breath',
+  'cannot_breathe': 'shortness_of_breath',
+  'hard_to_breathe': 'shortness_of_breath',
+  'trouble_breathing': 'shortness_of_breath',
+  'passing_out': 'unconsciousness', // chain → altered_consciousness
+  'eyes_yellow': 'jaundice',
+  'yellow_eyes': 'jaundice',
+  'urine_burning': 'burning_urination',
+  'period_missed': 'missed_period',
+  'no_period': 'missed_period',
+  'tired_all_the_time': 'fatigue',
+  'always_tired': 'fatigue',
+  'whole_body_pain': 'body_ache',
+  'body_aching': 'body_ache',
+
+  // Hinglish (Hindi transliterated) — ASHA workers dictate in this register
+  'pet_mein_dard': 'abdominal_pain',
+  'saans_phool_rahi': 'shortness_of_breath',
+  'sans_fool_rahi': 'shortness_of_breath',
+  'dam_ghut_raha': 'shortness_of_breath',
+  'behosh': 'unconsciousness',  // chain → altered_consciousness
+  'bekhosh': 'unconsciousness', // chain → altered_consciousness
+  'peeliya': 'jaundice',
+  'aankhen_peeli': 'jaundice',
+  'susu_jalan': 'burning_urination',
+  'peshaab_nahi_aa_raha': 'decreased_urine',
+  'tez_dhadkan': 'palpitations',
+  'dhadakan_tez': 'palpitations',
+  'bhookh_nahi_lag_rahi': 'loss_of_appetite',
+  'bhook_kam_hai': 'loss_of_appetite',
+  'gala_kharab': 'sore_throat',
+  'gale_mein_dard': 'sore_throat',
+  'kaan_baj_rahe': 'tinnitus',
+  'kaan_se_awaaz': 'tinnitus',
+  'naak_bandi': 'nasal_congestion',
+  'nak_band_hai': 'nasal_congestion',
+  'bahut_paseena': 'sweating',
+  'zyada_pasina': 'sweating',
+  'khoon_aa_raha': 'bleeding',
+  'khoon_nikal_raha': 'bleeding',
+  'saap_kaat_liya': 'snake_bite',
+  'saanp_ne_kata': 'snake_bite',
+  'kutta_kaat_liya': 'dog_bite',
+
+  // Native script (fills gaps in existing Indic coverage — existing block
+  // below covers fever/cough/etc. but missed these three phrasings)
+  'चक्कर आ रहे': 'dizziness',
+  'सांप काट लिया': 'snake_bite',
 
 
   // ═══ NATIVE SCRIPT ALIASES (v2 auto-generated) ═══

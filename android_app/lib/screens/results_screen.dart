@@ -1375,7 +1375,14 @@ class _ResultsScreenState extends State<ResultsScreen> {
   }
 
   Widget _buildSpecialistSection() {
-    final screenings = widget.result.specialistScreenings;
+    // Drop screenings that ran on <40% real features: they're zero-fill
+    // dominated, which silently biases the tabular models toward the
+    // "normal" class. _run already returns null below the 0.4 gate, so
+    // screenings here all have coverage ≥0.4 — but the asset pipeline
+    // could change, and a defensive filter costs ~nothing.
+    final screenings = widget.result.specialistScreenings
+        .where((s) => s.featureCoverage >= 0.4)
+        .toList();
     if (screenings.isEmpty) return const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1407,6 +1414,10 @@ class _ResultsScreenState extends State<ResultsScreen> {
     } else {
       rc = Colors.green.shade400; ri = Icons.check_circle_rounded;
     }
+    // A coverage < 0.7 means ≥30% of the model's features were zero-filled
+    // (no data). The model still produces a probability but it's biased
+    // toward "normal" — surface this to the worker as "Partial data".
+    final partialData = s.featureCoverage < 0.7;
     return Card(
       margin: const EdgeInsets.only(bottom: 10), elevation: 1,
       shape: RoundedRectangleBorder(
@@ -1426,7 +1437,22 @@ class _ResultsScreenState extends State<ResultsScreen> {
             children: [
               Text(s.modelName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
               const SizedBox(height: 2),
-              Text(s.riskLabel, style: TextStyle(color: rc, fontWeight: FontWeight.w500, fontSize: 13)),
+              Row(children: [
+                Text(s.riskLabel, style: TextStyle(color: rc, fontWeight: FontWeight.w500, fontSize: 13)),
+                if (partialData) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade100,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.amber.shade700, width: 0.8)),
+                    child: Text(
+                      'Partial data ${(s.featureCoverage * 100).toStringAsFixed(0)}%',
+                      style: TextStyle(color: Colors.amber.shade900, fontSize: 10, fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ]),
             ])),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),

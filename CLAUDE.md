@@ -81,6 +81,10 @@ EOF
 
 After any change, run `flutter analyze` from `android_app/` and confirm 0 errors + 0 warnings. Only `prefer_const_constructors` info messages are acceptable.
 
+### Reachability-audit regex gotcha
+
+A single-pass regex like `^\s*'([a-z_]+)':\s*\{BodySystem` silently misses ~295 SSM keys because `symptomSystemMap` entries span multiple lines — the `{BodySystem...}` weight map typically opens on the line *after* the key. **Always extract the `symptomSystemMap = { ... };` block first, then parse `^\s*'([a-z_]+)'\s*:` from the block body.** The same multi-line trap applies to `symptomAliases`. A broken audit will report false "orphan symptom" / "dead chip" findings and waste a review pass chasing ghosts.
+
 ## Architecture: the prediction pipeline
 
 The diagnostic pipeline is **clinical-reasoning-first**, not ML-first. This is deliberate and should not be inverted.
@@ -94,7 +98,11 @@ demographics (age, sex) ─────────┘        ▲               
                                           └─ ML boost (optional): mlConfidences from the
                                              general 754-class TFLite classifier, used ONLY
                                              to upweight existing DiseaseProfile candidates
-                                             by matching ID. Never adds new candidates.
+                                             by matching ID. Never adds new candidates. Max
+                                             boost is 1.25× (coefficient 0.25) because the
+                                             underlying MLP↔RF agreement is 0.55 — a confident
+                                             logit should tiebreak, not override clinical
+                                             reasoning.
 
 Separately: SpecialistModelsService.screenAll()   → 6 tabular TFLite models (heart, diabetes,
                                                     kidney, liver, stroke, maternal)
@@ -117,19 +125,34 @@ This is the most important architectural invariant in the app. A symptom selecte
 - **Cardinal elimination**: if a disease has cardinal symptoms but NONE match the patient's, score = 0. Implemented in `clinical_engine.dart` around the `_scoreCandidate` method. This is why every `DiseaseProfile` must have ≥1 cardinal.
 - **Scoring weights** (tuned empirically): Cardinal 50%, Common 20%, Prevalence 15%, Explanation 10%, Occasional 5%.
 - **Risk calibration**: 2 mild symptoms (e.g. fever + cough) should never produce `ClinicalRisk.emergency`. Red flags produce emergency — disease scoring alone does not.
-- **Age-based escalation** (`clinical_engine.dart` ~L590): patients with `age < 5 || age > 65` get `normal → moderate` unconditionally and `moderate → urgent` when `cardinalCoverage > 0.3`. The threshold is deliberately permissive (was 0.6, lowered to 0.3 in the round-2 audit) to catch septic young children who score low on curated profiles — there's no dedicated sepsis profile, so the age-based escalation is the safety net. A future pass should add a `RedFlagRule` keyed on `fever + tachycardia + poor_perfusion` to close this properly.
+- **Age-based escalation** (`clinical_engine.dart` ~L590): patients with `age < 5 || age > 65` get `normal → moderate` unconditionally and `moderate → urgent` when `cardinalCoverage >= 0.25`. Lowered from 0.3 to 0.25 so that a single-cardinal match on a 4-cardinal febrile profile (coverage = 0.25 exactly) still escalates for vulnerable ages. A dedicated `rf_sepsis` rule (fever + ≥2 of altered_consciousness/palpitations/low_bp/pallor/cyanosis/lethargy/severe_sob) now backstops this — the age escalation is still kept as a belt-and-braces fallback.
+- **Unknown-symptom tokens**: `_normalizeSymptoms` drops (not keeps) tokens that don't resolve via alias map, `symptomSystemMap`, or fuzzy match. Disease profiles use canonical SSM keys only, so unknowns inflate `totalMatched` counts nowhere and used to leak garbage into reasoning strings — the fallback-keep branch was removed in the accuracy-tuning pass.
+- **Fuzzy matching** (both `clinical_engine._fuzzyMatchSymptom` and `fuzzy_symptom_matcher._fuzzyMatch`):
+  - Substring-contains in the engine requires both sides ≥ 4 chars.
+  - Voice matcher uses max edit distance 2 (was 3), minimum token length 5 for Latin scripts (was 3), 3 for Indic. This closes the "feed→fever", "dough→cough", "fewer→fever" false-positive path without breaking native-script voice input (which flows through the alias map first anyway).
 - **Fever expansion**: the engine auto-adds `fever`/`mild_fever` when any fever variant is present. Also injects `fever`/`high_fever` from vitals when temperature ≥ 100.4°F / ≥ 104°F. If the user wants to report fever without a thermometer reading, there ARE chips (`fever`, `high_fever`, `mild_fever`) in the General category — do not "fix" this by removing them. **All temperature thresholds in this codebase are Fahrenheit** — if a Celsius input path is ever added, auto-convert before the fever check.
 - **Pediatric dosing daily cap** (`dosage_screen.dart` `_DrugRule.dose()`): every rule has both `maxMgPerDose` AND `maxMgPerDay`. The compute path clamps by per-dose first, then reduces the dose if `mg * dosesPerDay > maxMgPerDay`. Paracetamol is set to 3000 mg/day (WHO/NICE pediatric cap — prevents hepatotoxicity on the 4-dose 3-day course for 35+ kg children). Never add a new drug rule without setting both caps.
+
+### Prevalence calibration (India-specific sources)
+
+`DiseaseProfile.prevalence` (0.0–1.0) contributes 15% of the scoring weight and directly shapes ranking ties. Always calibrate against an India-specific source and cite it in an inline comment on the profile:
+
+- **NFHS-5** (National Family Health Survey, 2019–21) — anemia (57% women 15–49), childhood stunting (35.5% <5), diabetes self-reported rates, contraceptive use, immunization coverage
+- **ICMR** — enteric fever (typhoid/paratyphoid) incidence studies, NCD surveillance
+- **WHO / MOHFW** — TB burden (India ≈ 2.6M cases/year, ~26% of global load), malaria seasonal maps, leprosy, neglected tropical diseases
+- **ClinicalTrials.gov / published cohorts** — chronic disease incidence (CAD, CKD, COPD)
+
+Global prevalence numbers (US CDC, WHO global averages) routinely undersell conditions that are endemic in rural India — anemia and TB are the most notorious. Cite the source inline so the next editor can validate rather than second-guess.
 
 ### Service layer (lib/services/)
 
 | File | Role |
 |---|---|
-| `clinical_knowledge.dart` | Data: 162 `DiseaseProfile`s, 11 `RedFlagRule`s, 295 `symptomSystemMap` keys, 642 `symptomAliases` pairs |
-| `clinical_engine.dart` | 5-step diagnostic pipeline. `_normalizeSymptoms` does alias-chain resolution + fuzzy match |
-| `ml_service.dart` | Orchestrates ClinicalEngine + tabular ML + image classification. Class is `MLService` (uppercase). |
-| `specialist_models.dart` | Singleton loading 6 tabular TFLite models. `buildFromVitals()` maps patient vitals into each model's feature space. Risk scoring is **label-aware** (see note below). `SpecialistScreening` has a required `featureCoverage` field (0.0–1.0) reporting how many of the model's expected features were actually present — UI should de-weight risk when < 0.7, since missing features silently zero-fill and bias predictions toward "normal". |
-| `fuzzy_symptom_matcher.dart` | Voice-input matcher: substring + Levenshtein (30% threshold, max edit distance 3), flattens alias chains at lookup-table build time |
+| `clinical_knowledge.dart` | Data: 162 `DiseaseProfile`s, 16 `RedFlagRule`s (rf_sepsis + rf_severe_malaria + rf_postpartum_hemorrhage + rf_hypoglycemia + rf_suicidal_ideation added in accuracy pass), 295 `symptomSystemMap` keys, 642 `symptomAliases` pairs |
+| `clinical_engine.dart` | 5-step diagnostic pipeline. `_normalizeSymptoms` does alias-chain resolution + fuzzy match (unknown tokens dropped, not retained). ML boost is capped at 1.25× (0.25 coefficient). |
+| `ml_service.dart` | Orchestrates ClinicalEngine + tabular ML + image classification. Class is `MLService` (uppercase). The 754-class general classifier maps to 99 DiseaseProfile IDs directly + 33 via `_mlClassToProfileAlias` (dengue↔dengue_fever, copd↔…, hiv↔…, etc.) for a total ML→profile overlap of ~132/162. Raw ML input flows through `List<List<double>>` to `Interpreter.run()`; **never** `.buffer.asFloat32List()` on a Float64List — that byte-reinterprets doubles into 2× garbage floats. |
+| `specialist_models.dart` | Singleton loading 6 tabular TFLite models. `buildFromVitals()` maps captured vitals into each model's feature space. Derived fields: `hypertension` (1 if systolic≥140 OR diastolic≥90), `heart_disease` (default 0 = no known history, overridable via param), `bp` = systolic (kidney feature alias). Risk scoring is **label-aware** (see note below). `SpecialistScreening.featureCoverage` (0.0–1.0) reports real-vs-zero-filled feature ratio; results screen hides <0.4, shows "Partial data X%" amber chip at 0.4–0.7. Feature key matching uses `_canonicalKey` = `toLowerCase().trim().replaceAll(RegExp(r'\s+'), '_')` — **all whitespace including NBSP (U+00A0)**, not just ASCII space (three liver features had an invisible NBSP prefix and were silently unreachable). |
+| `fuzzy_symptom_matcher.dart` | Voice-input matcher: substring + Levenshtein, max edit distance **2** (tightened from 3), min token length **5 for Latin / 3 for Indic**. Flattens alias chains at lookup-table build time. |
 | `database_service.dart` | SQLite (schema v2). PII columns (`patient_name`, `voice_transcript`, `notes`) are AES-GCM encrypted via `EncryptionService`. `household_id` groups family members for contagion view. **All PII reads go through `_safeDecrypt`** (try/catch wrapper) — a single corrupt envelope must not crash the entire history retrieval; same resilience pattern as `_safeDecode` for JSON columns. |
 | `encryption_service.dart` | AES-256-GCM. Key stored in `flutter_secure_storage` (Android Keystore / iOS Keychain). `encryptString` / `decryptString` produce/consume `iv_b64|ct_b64` envelopes |
 | `handoff_service.dart` | WhatsApp (native scheme then wa.me fallback), SMS draft, tel dialer. **Do NOT use `canLaunchUrl` pre-check** — Android 11+ returns false for undeclared packages even when installed. `_sanitizePhone` rejects garbage input outside 7–15 digits, but `_emergencyShortCodes` (100/101/102/104/108/112/1098) bypass the length minimum — never remove that allowlist or `dial('108')` silently returns false. |
@@ -182,6 +205,18 @@ risk = P(high-risk-labels) + 0.5 · P(mid-risk-labels)
 ```
 with helpers `_isHighRiskLabel` / `_isMidRiskLabel` / `_isLowRiskLabel` that check `_isLowRiskLabel` FIRST (so "notckd" doesn't match the `contains('ckd')` branch for high risk).
 
+## buildFromVitals: the "observable-only" rule
+
+`SpecialistModelsService.buildFromVitals()` synthesizes feature-space inputs ONLY from data an ASHA worker can actually observe or measure: age/sex, BP cuff reading, thermometer, pulse oximeter, weight/height, and explicit yes/no history flags (`knownHeartDisease`). Derived fields are honest when they come from real measurements — `hypertension = 1` if systolic≥140 OR diastolic≥90 is fine because the BP reading was captured.
+
+**Never default lab values** (cholesterol, HbA1c, fasting glucose, average glucose, serum creatinine, bilirubin, urinalysis, albumin). A population-mean default silently biases every patient toward "normal" — the model sees a plausible-looking vector and emits confident low-risk predictions for people who actually have untested disease. Heart (13 features, mostly labs) and Liver (9 features, mostly labs) SHOULD silently fail the 0.4 `featureCoverage` gate on pure ASHA data; the results screen already hides sub-0.4 cards and renders a "Partial data" amber chip between 0.4–0.7. That's the honest behavior. If a future clinic-integration path feeds real labs in, extend `buildFromVitals` to accept them as optional params — don't backfill synthetic values.
+
+## Adding a DiseaseProfile? Check `disease_list.json` for an ML twin
+
+The 754-class general classifier uses verbose Kaggle labels (`dengue_fever`, `chronic_obstructive_pulmonary_disease_(copd)`, `obsessive_compulsive_disorder_(ocd)`) while curated `DiseaseProfile` IDs are terse (`dengue`, `copd`, `ocd`). Direct ID match is 99/162; the remaining 33 come from hand-curated entries in `_mlClassToProfileAlias` in `ml_service.dart`.
+
+**Before adding a new `DiseaseProfile`**: grep `android_app/assets/models/disease_list.json` for near-matches by the human-disease name. If a verbose ML class exists for the same condition, add a `_mlClassToProfileAlias` entry so the general classifier can upweight your new profile. Without the alias, the ML boost silently misses — the profile is reachable only through pure clinical-engine scoring and never benefits from the 754-class model's agreement signal.
+
 ## Image preprocessing
 
 `_preprocessImage` in `assessment_screen.dart` is the only place that produces the `List<List<List<double>>>` tensor fed to `MLService.classifyImage`. It:
@@ -199,6 +234,11 @@ with helpers `_isHighRiskLabel` / `_isMidRiskLabel` / `_isLowRiskLabel` that che
 1. **`<queries>` entries** for `https`, `http`, `sms`, `smsto`, `tel` schemes (so `canLaunchUrl` can see handlers), plus explicit `<package android:name="com.whatsapp" />` and `com.whatsapp.w4b`. Without the queries block, the "Send summary to PHC" button reports "WhatsApp not available" even when installed.
 2. **`android:allowBackup="false"`** on `<application>` plus `android:dataExtractionRules="@xml/data_extraction_rules"`. Default `allowBackup=true` would let `adb backup` and Android 12+ D2D transfer copy the encrypted SQLite — ciphertext is non-portable (keys live in Android Keystore on the source device), so a backup copy is both useless to the user AND a static target. The `xml/data_extraction_rules.xml` excludes root / file / database / sharedpref / external from both cloud-backup and device-transfer.
 3. **Permissions**: `CAMERA`, `RECORD_AUDIO`, `VIBRATE`, `INTERNET`, plus `WRITE_EXTERNAL_STORAGE` capped at `maxSdkVersion="28"` and `READ_EXTERNAL_STORAGE` at `"32"` — legacy storage perms are no-ops on API 29+ so capping them prevents Play Store warnings and keeps permission disclosure honest.
+4. **`android:usesCleartextTraffic="false"`** + `android:networkSecurityConfig="@xml/network_security_config"` on `<application>`. The config file trusts system CAs only and blocks plaintext HTTP app-wide. If a future debug build needs an `http://` endpoint, add a per-build override (don't flip the global flag) — the whole point is to make it impossible to accidentally ship a cleartext path.
+
+## Anti-screenshot (FLAG_SECURE)
+
+`android/app/src/main/kotlin/com/ruralhealth/rural_health_ai/MainActivity.kt` sets `WindowManager.LayoutParams.FLAG_SECURE` in `onCreate` — blocks screenshots and the recents-thumbnail leak of patient data. The flag is gated to release builds via `(applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0` so Flutter's hot-reload developer screenshots still work. **Do NOT switch the gate to `BuildConfig.DEBUG`** — that symbol requires enabling `buildFeatures.buildConfig` in `android/app/build.gradle.kts` and was deliberately avoided.
 
 ## Release build — R8 and ProGuard
 
