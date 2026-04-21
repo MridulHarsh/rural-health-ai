@@ -89,9 +89,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
       for (final c in (r['conditions'] as List? ?? const []))
         if (c is Map)
           PredictedCondition(
-            canonicalId: c['canonicalId']?.toString() ??
-                c['name']?.toString().toLowerCase().replaceAll(' ', '_') ??
-                'unknown',
+            // Pre-v3 rows have no `canonicalId` key. Fall back to 'unknown'
+            // rather than munging the display name — "Dengue Fever" would
+            // become `dengue_fever` but the real profile id is `dengue`,
+            // so the munged key is garbage that would corrupt FHIR
+            // Condition.code and analytics top_conditions alike. Honest
+            // 'unknown' is safer than a plausible-looking fake id.
+            canonicalId: c['canonicalId']?.toString() ?? 'unknown',
             name: c['name']?.toString() ?? 'Unknown',
             confidence: (c['confidence'] as num?)?.toDouble() ?? 0.0,
             riskLevel: _riskFromName(c['riskLevel']?.toString()),
@@ -133,6 +137,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         builder: (_) => FollowupScreen(assessment: result),
       ),
     );
+    if (!mounted) return;
     if (saved == true) _load();
   }
 

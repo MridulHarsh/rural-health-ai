@@ -164,16 +164,24 @@ class RedFlagAlert {
   final String immediateAction;
   final List<String> triggerSymptoms;
 
+  /// Canonical rule ID (e.g. `rf_sepsis`, `rf_severe_malaria`) — stable
+  /// across locales and releases. `conditionName` is the English display
+  /// label; `ruleId` is the key the analytics exporter uses so downstream
+  /// aggregation doesn't depend on English string stability.
+  final String? ruleId;
+
   RedFlagAlert({
     required this.conditionName,
     required this.immediateAction,
     required this.triggerSymptoms,
+    this.ruleId,
   });
 
   Map<String, dynamic> toJson() => {
         'conditionName': conditionName,
         'immediateAction': immediateAction,
         'triggerSymptoms': triggerSymptoms,
+        if (ruleId != null) 'ruleId': ruleId,
       };
 }
 

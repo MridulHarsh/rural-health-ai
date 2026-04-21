@@ -99,17 +99,25 @@ class _FollowupScreenState extends State<FollowupScreen> {
     String? errorMsg;
     try {
       await OutcomeService.save(outcome);
-      // Analytics export is fire-and-forget — a JSONL append failure
-      // should not block the save-outcome success path. The caller knows
-      // consent was ticked if they tap "Export" from Settings later.
-      if (_consentToShare) {
+    } catch (_) {
+      errorMsg = _t('outcome_save_failed');
+    }
+
+    // Analytics export is fire-and-forget — a JSONL append failure must
+    // not surface as "outcome save failed", which would prompt the ASHA
+    // to retap save and create a duplicate outcome row (each tap mints
+    // a fresh UUID). Its own try/catch runs only when the save above
+    // succeeded and consent is granted.
+    if (errorMsg == null && _consentToShare) {
+      try {
         await AnalyticsExporter.record(
           result: widget.assessment,
           outcome: outcome,
         );
+      } catch (_) {
+        // Swallow — save already succeeded. If the JSONL is wedged,
+        // the user can retry from Settings → Export anonymized data.
       }
-    } catch (_) {
-      errorMsg = _t('outcome_save_failed');
     }
 
     if (!mounted) return;
@@ -214,12 +222,12 @@ class _FollowupScreenState extends State<FollowupScreen> {
                   fontSize: 16, fontWeight: FontWeight.w600)),
           const SizedBox(height: 2),
           Text(
-            'Age ${p.age} • ${p.gender}',
+            '${_t('age')} ${p.age} • ${p.gender}',
             style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
           ),
           if (top != null) ...[
             const SizedBox(height: 8),
-            Text('AI top prediction: $top',
+            Text('${_t('ai_top_prediction')}: $top',
                 style:
                     TextStyle(fontSize: 12, color: Colors.grey.shade700)),
           ],

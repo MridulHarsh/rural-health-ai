@@ -118,7 +118,11 @@ class AnalyticsExporter {
       'overall_risk': result.overallRisk.name,
       'implicated_systems': result.implicatedSystems,
       'red_flag_triggered': result.redFlag != null,
-      'red_flag_condition': result.redFlag?.conditionName,
+      // Canonical rule ID (rf_sepsis, rf_postpartum_hemorrhage, …) — NOT
+      // the English display string on `conditionName`. Rule 4 above keeps
+      // the conditions dimension stable and name-agnostic for downstream
+      // analytics; a null fallback is fine (means pre-ruleId record).
+      'red_flag_condition': result.redFlag?.ruleId,
       'vitals_present': _vitalsPresent(result.vitals),
       'has_image': result.imagePath != null,
       'image_type': result.imageType,

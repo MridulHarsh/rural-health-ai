@@ -376,8 +376,10 @@ class AppTranslations {
       // ABHA + FHIR handoff (feature #1)
       'abha_id': 'ABHA ID (optional)',
       'abha_id_hint': '14-digit Ayushman Bharat Health Account number',
+      'abha_id_invalid': 'ABHA ID must be exactly 14 digits',
       'abha_address': 'ABHA Address (optional)',
       'abha_address_hint': 'e.g. username@ndhm',
+      'ai_top_prediction': 'AI top prediction',
       'share_fhir_bundle': 'Share FHIR bundle',
       'share_fhir_subtitle': 'Send ABDM-compatible record to the PHC',
       'fhir_bundle_share_failed': 'Could not open the share sheet. Please try again.',
