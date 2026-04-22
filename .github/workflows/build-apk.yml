@@ -55,6 +55,16 @@ jobs:
       - name: Analyze (errors + warnings fail the build; infos allowed per CLAUDE.md)
         run: flutter analyze --no-fatal-infos
 
+      # Run the pure-Dart unit tests on every push / PR. They don't need a
+      # device (sqflite_common_ffi in-memory DB + test-only encryption key),
+      # so the ~2s runtime is trivial but they catch regressions in
+      # ClinicalEngine scoring and the Outbox queue lifecycle that
+      # `flutter analyze` cannot. The existing widget_test.dart is excluded
+      # because it initializes MaterialApp, which pulls in platform channels
+      # that aren't available on a headless CI runner.
+      - name: Run unit tests
+        run: flutter test test/clinical_engine_test.dart test/handoff_queue_service_test.dart
+
       # Release signing — set up ONLY if the four signing secrets are
       # configured on the repo. When they're absent (e.g. fork builds, or
       # a fresh clone before secrets are added) we skip this step and the

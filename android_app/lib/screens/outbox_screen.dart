@@ -86,6 +86,7 @@ class _OutboxScreenState extends State<OutboxScreen> {
     );
     if (confirmed != true) return;
     await HandoffQueueService.delete(item.id);
+    if (!mounted) return;
     _load();
   }
 

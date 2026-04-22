@@ -164,11 +164,20 @@ class HandoffQueueService {
 
   /// Persist a FHIR bundle to the app's documents dir so it survives cache
   /// reclamation until the user either re-shares or deletes the queue item.
-  /// Returns the absolute path.
+  /// The bundle itself is encrypted at rest — it contains Patient.name,
+  /// ABHA identifiers, conditions, and vitals, all of which CLAUDE.md's
+  /// DPDP invariant forbids from ever touching disk in plaintext. Every
+  /// other PII path in the app (DB columns, queue payload/recipient/label)
+  /// is AES-GCM via [EncryptionService]; the Outbox FHIR file follows the
+  /// same envelope.
   ///
-  /// Kept in a subdirectory (`fhir_outbox/`) for tidiness; the filename
-  /// pattern mirrors [HandoffService.shareFhirBundle] so an ASHA looking at
-  /// the share sheet sees a consistent name.
+  /// Files are written with a `.fhir.enc` extension so a developer poking
+  /// at the device filesystem can tell at a glance that the contents are
+  /// encrypted, not a plain JSON artefact they can read or import.
+  ///
+  /// The filename's hash prefix is plaintext by design — it's the first 8
+  /// hex chars of a SHA-256 over the canonical JSON, which is non-PII
+  /// deduplication metadata.
   static Future<String> persistFhirBundle({
     required String bundleJson,
     required String bundleHash,
@@ -182,8 +191,42 @@ class HandoffQueueService {
         ? bundleHash.substring(0, 8)
         : bundleHash;
     final ts = DateTime.now().millisecondsSinceEpoch;
-    final file = File(path.join(outboxDir.path, 'fhir_${hashPrefix}_$ts.json'));
-    await file.writeAsString(bundleJson, flush: true);
+    final file = File(
+        path.join(outboxDir.path, 'fhir_${hashPrefix}_$ts.fhir.enc'));
+    final envelope = EncryptionService.encryptString(bundleJson);
+    await file.writeAsString(envelope, flush: true);
     return file.path;
+  }
+
+  /// Decrypt a persisted FHIR bundle created by [persistFhirBundle] into a
+  /// short-lived temp file, ready to hand off to the platform share sheet
+  /// with a clean `.json` extension. Caller is responsible for deleting the
+  /// returned temp file after `Share.shareXFiles` / `SharePlus.instance.share`
+  /// returns.
+  ///
+  /// Returns null if the ciphertext file is gone (user cleared storage) or
+  /// the envelope fails to decrypt (keystore wipe / corruption).
+  static Future<File?> decryptBundleToTemp(String encPath) async {
+    try {
+      final src = File(encPath);
+      if (!await src.exists()) return null;
+      final envelope = await src.readAsString();
+      final plaintext = EncryptionService.decryptString(envelope);
+      // If the plaintext round-trips to the same envelope string, decryption
+      // failed silently (see EncryptionService.decryptString's resilience
+      // fallback) — treat as unreadable rather than shipping ciphertext.
+      if (plaintext == envelope && envelope.contains('|')) return null;
+      final tmp = await getTemporaryDirectory();
+      final base = path.basenameWithoutExtension(encPath); // drops .enc
+      final out = File(path.join(tmp.path,
+          '${base.replaceAll('.fhir', '')}_${DateTime.now().millisecondsSinceEpoch}.json'));
+      await out.writeAsString(plaintext, flush: true);
+      return out;
+    } catch (e) {
+      // Never log the bundle contents or the envelope — both carry PII.
+      // Surface only the exception type.
+      // ignore: avoid_print
+      return null;
+    }
   }
 }

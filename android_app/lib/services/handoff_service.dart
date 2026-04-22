@@ -229,6 +229,11 @@ class HandoffService {
       await HandoffQueueService.markLaunched(id);
       return HandoffResult.launched;
     }
+    // Launch failed (e.g. WhatsApp not installed). Drop the audit row —
+    // otherwise the home-screen "pending" badge reports a phantom the ASHA
+    // never chose to queue. The returned `failed` result surfaces as a
+    // snackbar so the user still knows the send didn't go through.
+    await HandoffQueueService.delete(id);
     return HandoffResult.failed;
   }
 
@@ -263,6 +268,7 @@ class HandoffService {
       await HandoffQueueService.markLaunched(id);
       return HandoffResult.launched;
     }
+    await HandoffQueueService.delete(id);
     return HandoffResult.failed;
   }
 
@@ -307,17 +313,33 @@ class HandoffService {
       fileHash: bundleHash,
       label: label,
     );
-    final ok = await _shareFileWithShareSheet(
-      filePath: persistedPath,
-      mimeType: 'application/fhir+json',
-      subject: subject ?? 'Clinical Assessment Summary (FHIR Bundle)',
-      text: messageBody,
-    );
-    if (ok) {
-      await HandoffQueueService.markLaunched(id);
-      return HandoffResult.launched;
+    // The persisted file is AES-GCM encrypted; decrypt to a short-lived
+    // temp file before feeding the path to the share sheet, then delete
+    // the decrypted copy once the share completes.
+    final decrypted =
+        await HandoffQueueService.decryptBundleToTemp(persistedPath);
+    if (decrypted == null) {
+      await HandoffQueueService.delete(id);
+      return HandoffResult.failed;
     }
-    return HandoffResult.failed;
+    try {
+      final ok = await _shareFileWithShareSheet(
+        filePath: decrypted.path,
+        mimeType: 'application/fhir+json',
+        subject: subject ?? 'Clinical Assessment Summary (FHIR Bundle)',
+        text: messageBody,
+      );
+      if (ok) {
+        await HandoffQueueService.markLaunched(id);
+        return HandoffResult.launched;
+      }
+      await HandoffQueueService.delete(id);
+      return HandoffResult.failed;
+    } finally {
+      try {
+        if (await decrypted.exists()) await decrypted.delete();
+      } catch (_) {/* best-effort cleanup */}
+    }
   }
 
   /// Re-launch a queued item from the Outbox screen. Returns true on a
@@ -334,14 +356,26 @@ class HandoffService {
         return draftSms(message: item.payload, phone: item.recipient);
       case HandoffKind.fhirShare:
         if (item.filePath == null) return false;
-        final f = File(item.filePath!);
-        if (!await f.exists()) return false;
-        return _shareFileWithShareSheet(
-          filePath: item.filePath!,
-          mimeType: 'application/fhir+json',
-          subject: 'Clinical Assessment Summary (FHIR Bundle)',
-          text: item.payload.isEmpty ? null : item.payload,
-        );
+        // The persisted bundle is encrypted at rest (see
+        // [HandoffQueueService.persistFhirBundle]). Decrypt to a short-lived
+        // temp file before handing the path to the share sheet; delete the
+        // decrypted copy after the share sheet returns so plaintext doesn't
+        // linger past the handoff.
+        final decrypted =
+            await HandoffQueueService.decryptBundleToTemp(item.filePath!);
+        if (decrypted == null) return false;
+        try {
+          return await _shareFileWithShareSheet(
+            filePath: decrypted.path,
+            mimeType: 'application/fhir+json',
+            subject: 'Clinical Assessment Summary (FHIR Bundle)',
+            text: item.payload.isEmpty ? null : item.payload,
+          );
+        } finally {
+          try {
+            if (await decrypted.exists()) await decrypted.delete();
+          } catch (_) {/* best-effort cleanup */}
+        }
     }
   }
 

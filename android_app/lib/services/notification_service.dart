@@ -36,12 +36,31 @@ class NotificationService {
 
   static bool _initialized = false;
 
-  /// One-time setup. Accepts an optional [onOpenOutbox] callback invoked
-  /// when the user taps the notification — called inside the plugin's
-  /// background isolate, so keep work minimal (the caller navigates via
-  /// the top-level navigator key).
+  /// Was the current app process launched by a notification tap? Set during
+  /// [initialize] if `getNotificationAppLaunchDetails` reports a pending tap
+  /// that delivered before the Flutter engine was ready (cold start).
+  ///
+  /// Without this, cold-start taps silently no-op: the plugin delivers them
+  /// before `MaterialApp.build` runs, so [navigatorKey.currentState] is null
+  /// and the onDidReceiveNotificationResponse callback's `pushNamed` is a
+  /// dead write. The caller inspects this flag after `runApp` and schedules
+  /// a post-frame navigation instead.
+  static bool _launchedFromTap = false;
+
+  static bool get launchedFromNotificationTap => _launchedFromTap;
+
+  /// One-time setup. Accepts optional [onOpenOutbox] callback invoked
+  /// when the user taps a notification WHILE the app is running. Cold-start
+  /// taps set [launchedFromNotificationTap] instead; the caller checks that
+  /// flag after initialization and routes itself once the navigator is
+  /// ready. The [channelName] / [channelDescription] parameters let the
+  /// caller pass locale-appropriate strings (Android caches channel names
+  /// at creation time, so we can't reactively re-localize — best effort is
+  /// to use the user's current locale on first creation).
   static Future<void> initialize({
     VoidCallback? onOpenOutbox,
+    String channelName = _channelName,
+    String channelDescription = _channelDescription,
   }) async {
     if (_initialized) return;
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -53,15 +72,29 @@ class NotificationService {
         onOpenOutbox?.call();
       },
     );
+
+    // Check for a cold-start launch tap. On cold start the plugin delivers
+    // the tap before the Dart side is ready, so we read it here and let the
+    // caller act on it once the navigator is live.
+    try {
+      final details = await _plugin.getNotificationAppLaunchDetails();
+      if (details?.didNotificationLaunchApp ?? false) {
+        _launchedFromTap = true;
+      }
+    } catch (_) {
+      // No-op — absence of launch details is harmless.
+    }
+
     // Create the channel explicitly so we can pick importance. (On Android
-    // this is a no-op if the channel already exists.)
+    // this is a no-op if the channel already exists; first creation wins on
+    // the name + description, per platform spec.)
     final android13 = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     await android13?.createNotificationChannel(
-      const AndroidNotificationChannel(
+      AndroidNotificationChannel(
         _channelId,
-        _channelName,
-        description: _channelDescription,
+        channelName,
+        description: channelDescription,
         importance: Importance.high,
       ),
     );

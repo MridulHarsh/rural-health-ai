@@ -68,18 +68,43 @@ class _RuralHealthAppState extends State<RuralHealthApp> {
     try {
       await ConnectivityService.start();
     } catch (e) {
-      debugPrint('ConnectivityService start failed: $e');
+      // Log only the type — the exception message may contain platform
+      // channel paths or plugin internals we don't want in adb logcat.
+      debugPrint(
+          '[App] ConnectivityService start failed: ${e.runtimeType}');
     }
 
     // Wire local notifications: on offline→online transitions, tell the
     // ASHA that queued messages are ready to send. Permission prompt is
-    // only shown on Android 13+.
+    // only shown on Android 13+. Channel name/description are routed
+    // through [AppTranslations] so the name the user sees in system
+    // settings matches the app's current language at first launch.
+    // (Android caches channel name at creation time — locale changes
+    // after that won't re-localize the cached entry.)
     try {
-      await NotificationService.initialize(onOpenOutbox: _openOutbox);
+      await NotificationService.initialize(
+        onOpenOutbox: _openOutbox,
+        channelName: AppTranslations.t('notif_channel_outbox', langCode),
+        channelDescription:
+            AppTranslations.t('notif_permission_rationale', langCode),
+      );
       await NotificationService.requestPermission();
       _connSub = ConnectivityService.onChange.listen(_onConnectivityChange);
+
+      // If the app was launched by tapping an Outbox notification (cold
+      // start), route to /outbox once the navigator is up. The plugin's
+      // `onDidReceiveNotificationResponse` callback fires before
+      // `navigatorKey.currentState` exists on cold start, so we check the
+      // pending-launch flag that NotificationService captured and schedule
+      // our own post-frame pushNamed.
+      if (NotificationService.launchedFromNotificationTap) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          navigatorKey.currentState?.pushNamed('/outbox');
+        });
+      }
     } catch (e) {
-      debugPrint('NotificationService init failed: $e');
+      debugPrint(
+          '[App] NotificationService init failed: ${e.runtimeType}');
     }
 
     // Pre-load ML model
