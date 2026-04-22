@@ -75,13 +75,13 @@ class _ResultsScreenState extends State<ResultsScreen> {
       buf.writeln('Symptoms: ${r.symptoms.take(8).join(', ')}');
     }
     buf.writeln('Sent from Rural Health AI');
-    final ok = await HandoffService.sendToWhatsApp(message: buf.toString());
+    final label = 'PHC referral — ${r.patient.name}';
+    final outcome = await HandoffService.sendWhatsAppOrQueue(
+      message: buf.toString(),
+      label: label,
+    );
     if (!mounted) return;
-    if (!ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('WhatsApp not available on this device')),
-      );
-    }
+    _showHandoffOutcome(outcome, service: 'WhatsApp');
   }
 
   Future<void> _draftEmergencySms() async {
@@ -95,7 +95,45 @@ class _ResultsScreenState extends State<ResultsScreen> {
     }
     buf.write('Patient ${r.patient.name}, age ${r.patient.age}. ');
     buf.write('Need urgent transport.');
-    await HandoffService.draftSms(message: buf.toString());
+    final outcome = await HandoffService.draftSmsOrQueue(
+      message: buf.toString(),
+      label: 'Emergency SMS — ${r.patient.name}',
+    );
+    if (!mounted) return;
+    _showHandoffOutcome(outcome, service: 'SMS');
+  }
+
+  /// Translate a [HandoffResult] into a user-visible snackbar. Keeps the
+  /// three call sites (WhatsApp, SMS, FHIR share) consistent so the ASHA
+  /// gets the same "Queued to Outbox" language regardless of handoff kind.
+  void _showHandoffOutcome(HandoffResult outcome, {required String service}) {
+    final messenger = ScaffoldMessenger.of(context);
+    switch (outcome) {
+      case HandoffResult.launched:
+        // Composer opened — no snackbar needed, the compose UI is its own
+        // feedback. Silence here prevents stacked snackbars on quick taps.
+        break;
+      case HandoffResult.queued:
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(_t('handoff_queued_to_outbox')),
+            action: SnackBarAction(
+              label: _t('view'),
+              onPressed: () {
+                Navigator.pushNamed(context, '/outbox');
+              },
+            ),
+          ),
+        );
+        break;
+      case HandoffResult.failed:
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('$service: ${_t('handoff_failed')}'),
+          ),
+        );
+        break;
+    }
   }
 
   Future<void> _dial108() async {
@@ -1071,17 +1109,15 @@ class _ResultsScreenState extends State<ResultsScreen> {
       final bundle = FhirBundleService.buildBundle(widget.result);
       final json = FhirBundleService.toJsonString(bundle);
       final hash = FhirBundleService.computeHash(bundle);
-      final ok = await HandoffService.shareFhirBundle(
+      final outcome = await HandoffService.shareFhirOrQueue(
         bundleJson: json,
         bundleHash: hash,
         subject: _t('share_fhir_bundle'),
         messageBody: '${_t('fhir_bundle_message')}${hash.substring(0, 12)}…',
+        label: 'FHIR — ${widget.result.patient.name}',
       );
-      if (!ok && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_t('fhir_bundle_share_failed'))),
-        );
-      }
+      if (!mounted) return;
+      _showHandoffOutcome(outcome, service: 'FHIR');
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

@@ -85,23 +85,35 @@ jobs:
           keyPassword=$KEY_PASSWORD
           EOF
 
-      - name: Build release APK
-        run: flutter build apk --release
+      # split-per-abi produces three smaller APKs (armeabi-v7a, arm64-v8a,
+      # x86_64) instead of one universal ~130 MB binary. Target phones only
+      # need the one matching their CPU — the release workflow attaches all
+      # three to the GitHub Release so downloaders pick whichever fits.
+      - name: Build release APKs (split-per-abi)
+        run: flutter build apk --release --split-per-abi
 
-      - name: Verify APK produced
+      - name: Verify APKs produced
         run: |
-          apk=build/app/outputs/flutter-apk/app-release.apk
-          if [ ! -f "$apk" ]; then
-            echo "::error::APK not found at $apk — build step may have silently failed."
-            ls -R build/app/outputs/ || true
+          dir=build/app/outputs/flutter-apk
+          missing=0
+          for abi in armeabi-v7a arm64-v8a x86_64; do
+            apk="$dir/app-$abi-release.apk"
+            if [ ! -f "$apk" ]; then
+              echo "::error::Missing APK: $apk"
+              missing=1
+            else
+              echo "  $apk ($(du -h "$apk" | cut -f1))"
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            ls -R "$dir" || true
             exit 1
           fi
-          echo "APK size: $(du -h "$apk" | cut -f1)"
 
-      - name: Upload APK
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: rural-health-ai-${{ github.sha }}
-          path: android_app/build/app/outputs/flutter-apk/app-release.apk
+          path: android_app/build/app/outputs/flutter-apk/app-*-release.apk
           if-no-files-found: error
           retention-days: 30

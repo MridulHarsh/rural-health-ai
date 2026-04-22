@@ -11,13 +11,17 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:encrypt/encrypt.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class EncryptionService {
   static const _keyName = 'rh_aes_key_v1';
+  // flutter_secure_storage 10.x deprecated `encryptedSharedPreferences` —
+  // the plugin now auto-migrates legacy EncryptedSharedPreferences entries
+  // to custom-cipher storage (Jetpack Security was itself deprecated by
+  // Google). Keeping AndroidOptions() empty is the intended v10 shape.
   static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    aOptions: AndroidOptions(),
   );
 
   static Encrypter? _encrypter;
@@ -40,6 +44,21 @@ class EncryptionService {
   }
 
   static bool get isReady => _encrypter != null;
+
+  /// Initialise with a caller-supplied 32-byte key. Unit-test entry point —
+  /// production code goes through [initialize], which reads the key from
+  /// `flutter_secure_storage` (backed by Android Keystore / iOS Keychain).
+  /// Platform plugins are unavailable in pure Dart tests, so the tests
+  /// call this to plant a deterministic key instead.
+  @visibleForTesting
+  static void initializeForTests(Uint8List keyBytes) {
+    if (keyBytes.length != 32) {
+      throw ArgumentError.value(
+          keyBytes.length, 'keyBytes.length', 'expected 32 bytes');
+    }
+    _key = Key(Uint8List.fromList(keyBytes));
+    _encrypter = Encrypter(AES(_key!, mode: AESMode.gcm, padding: null));
+  }
 
   /// Encrypt a plaintext string. Returns `iv_b64|ct_b64` envelope.
   /// Safe to call with null/empty — returns empty string.

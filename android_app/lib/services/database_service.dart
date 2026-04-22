@@ -7,6 +7,8 @@ import 'encryption_service.dart';
 import 'inventory_service.dart';
 import 'mch_service.dart';
 
+// ignore_for_file: unused_element
+
 /// Local SQLite database for patient records. PII columns (patient_name,
 /// voice_transcript, notes, abha_id, abha_address, outcome free-text) are
 /// encrypted at rest via [EncryptionService].
@@ -15,7 +17,8 @@ class DatabaseService {
   // Schema versions:
   //   1 -> 2: household_id on assessments
   //   2 -> 3: abha_id + abha_address on assessments; followup_outcomes table
-  static const int _schemaVersion = 3;
+  //   3 -> 4: handoff_queue table (feature #4 — offline Outbox)
+  static const int _schemaVersion = 4;
 
   static Future<Database> get database async {
     if (_db != null) return _db!;
@@ -52,6 +55,7 @@ class DatabaseService {
           )
         ''');
         await _createFollowupOutcomesTable(db);
+        await _createHandoffQueueTable(db);
         await InventoryService.ensureSchema(db);
         await MchService.ensureSchema(db);
       },
@@ -72,10 +76,54 @@ class DatabaseService {
           }
           await _createFollowupOutcomesTable(db);
         }
+        if (oldV < 4) {
+          await _createHandoffQueueTable(db);
+        }
         await InventoryService.ensureSchema(db);
         await MchService.ensureSchema(db);
       },
     );
+  }
+
+  /// handoff_queue schema. The `payload_enc`, `recipient_enc`, and
+  /// `label_enc` columns are AES-GCM envelopes (see [EncryptionService]) —
+  /// the message body contains the patient summary and the recipient is a
+  /// phone number, both PII under DPDP. The status enum + kind + counters
+  /// stay plaintext so the Outbox can aggregate without the key.
+  ///
+  /// Marked [visibleForTesting] so the unit-test harness can re-create the
+  /// schema on an in-memory sqflite_common_ffi database without duplicating
+  /// the DDL.
+  @visibleForTesting
+  static Future<void> createHandoffQueueTable(Database db) =>
+      _createHandoffQueueTable(db);
+
+  static Future<void> _createHandoffQueueTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS handoff_queue(
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        payload_enc TEXT NOT NULL,
+        recipient_enc TEXT,
+        file_path TEXT,
+        file_hash TEXT,
+        status TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_tried_at TEXT,
+        label_enc TEXT
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_handoff_status ON handoff_queue(status)');
+  }
+
+  /// Replace the shared SQLite handle for unit tests. Production code never
+  /// touches this — it's guarded behind [visibleForTesting] and the CI
+  /// build does not include test sources.
+  @visibleForTesting
+  static void debugOverrideDatabase(Database? db) {
+    _db = db;
   }
 
   /// followup_outcomes schema. PII fields (actual_diagnosis, treatment_given,

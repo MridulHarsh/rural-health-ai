@@ -5,7 +5,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../l10n/translations.dart';
 import '../services/ml_service.dart';
 import '../services/database_service.dart';
+import '../services/handoff_queue_service.dart';
 import '../services/handoff_service.dart';
+import '../services/household_service.dart';
 import '../services/inventory_service.dart';
 import '../services/mch_service.dart';
 import '../services/outbreak_detector.dart';
@@ -24,6 +26,8 @@ class _HomeScreenState extends State<HomeScreen> {
   int _recordCount = 0;
   int _lowStockCount = 0;
   int _mchDueCount = 0;
+  int _outboxPending = 0;
+  int _householdAlertCount = 0;
   List<OutbreakAlert> _outbreaks = const [];
 
   @override
@@ -35,9 +39,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     final count = await DatabaseService.getCount();
-    // Surface ops data: low-stock meds + overdue MCH items + outbreak clusters.
+    // Surface ops data: low-stock meds + overdue MCH items + outbreak clusters
+    // + outbox backlog + household contagion alerts.
     int low = 0;
     int mch = 0;
+    int outbox = 0;
+    int hhAlerts = 0;
     List<OutbreakAlert> ob = const [];
     try {
       final items = await InventoryService.lowStock();
@@ -49,6 +56,12 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       ob = await OutbreakDetector.detect();
     } catch (_) {}
+    try {
+      outbox = await HandoffQueueService.pendingCount();
+    } catch (_) {}
+    try {
+      hhAlerts = await HouseholdService.totalContagionAlertCount();
+    } catch (_) {}
     if (!mounted) return;
     setState(() {
       _lang = prefs.getString('language') ?? 'en';
@@ -56,6 +69,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _lowStockCount = low;
       _mchDueCount = mch;
       _outbreaks = ob;
+      _outboxPending = outbox;
+      _householdAlertCount = hhAlerts;
     });
   }
 
@@ -444,6 +459,36 @@ class _HomeScreenState extends State<HomeScreen> {
                   delay: 700,
                   onTap: () async {
                     await Navigator.pushNamed(context, '/dosage');
+                  },
+                ),
+                _FeatureCard(
+                  icon: Icons.groups_rounded,
+                  title: _t('households'),
+                  subtitle: _householdAlertCount > 0
+                      ? '$_householdAlertCount ${_t('households_alerts')}'
+                      : _t('households_subtitle'),
+                  color: _householdAlertCount > 0
+                      ? const Color(0xFFDC2626)
+                      : const Color(0xFF0EA5E9),
+                  delay: 750,
+                  onTap: () async {
+                    await Navigator.pushNamed(context, '/households');
+                    _loadPrefs();
+                  },
+                ),
+                _FeatureCard(
+                  icon: Icons.outbox_rounded,
+                  title: _t('outbox_title'),
+                  subtitle: _outboxPending > 0
+                      ? '$_outboxPending ${_t('outbox_pending_subtitle')}'
+                      : _t('outbox_empty_subtitle'),
+                  color: _outboxPending > 0
+                      ? const Color(0xFFD97706)
+                      : const Color(0xFF64748B),
+                  delay: 800,
+                  onTap: () async {
+                    await Navigator.pushNamed(context, '/outbox');
+                    _loadPrefs();
                   },
                 ),
 

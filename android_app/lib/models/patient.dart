@@ -80,7 +80,7 @@ class Vitals {
     this.height,
   });
 
-  /// Convert vitals to the Map<String, double> format the clinical engine expects.
+  /// Convert vitals to the `Map<String, double>` format the clinical engine expects.
   Map<String, double> toEngineMap() {
     final map = <String, double>{};
     if (temperature != null) map['temperature'] = temperature!;
