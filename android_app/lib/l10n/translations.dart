@@ -373,6 +373,155 @@ class AppTranslations {
       'call_ambulance_confirm_body': 'This will dial 108, the nationwide emergency ambulance number.',
       'call_ambulance_cta': 'Call 108',
       'call_ambulance_launch_failed': 'Could not open the dialer. Please dial 108 manually.',
+      // ABHA + FHIR handoff (feature #1)
+      'abha_id': 'ABHA ID (optional)',
+      'abha_id_hint': '14-digit Ayushman Bharat Health Account number',
+      'abha_id_invalid': 'ABHA ID must be exactly 14 digits',
+      'abha_address': 'ABHA Address (optional)',
+      'abha_address_hint': 'e.g. username@ndhm',
+      'ai_top_prediction': 'AI top prediction',
+      'share_fhir_bundle': 'Share FHIR bundle',
+      'share_fhir_subtitle': 'Send ABDM-compatible record to the PHC',
+      'fhir_bundle_share_failed': 'Could not open the share sheet. Please try again.',
+      'fhir_bundle_message':
+          'Clinical Assessment Summary — FHIR Bundle attached. Encounter hash: ',
+      // Follow-up outcome tracking (feature #3)
+      'record_outcome': 'Record outcome',
+      'record_outcome_subtitle': 'Log the PHC diagnosis and adherence',
+      'followup_title': 'Record Follow-up',
+      'followup_due': 'Follow-up due',
+      'followup_recorded': 'Outcome recorded',
+      'followup_date': 'Follow-up date',
+      'actual_diagnosis': 'PHC diagnosis',
+      'actual_diagnosis_hint': 'What did the physician diagnose?',
+      'treatment_given': 'Treatment given',
+      'treatment_given_hint': 'Drugs / procedures prescribed',
+      'adherence': 'Adherence',
+      'adherence_full': 'Full',
+      'adherence_partial': 'Partial',
+      'adherence_none': 'None',
+      'adherence_unknown': 'Unknown',
+      'outcome_status': 'Outcome',
+      'outcome_resolved': 'Resolved',
+      'outcome_improving': 'Improving',
+      'outcome_worse': 'Same / worse',
+      'outcome_referred_further': 'Referred further',
+      'outcome_no_phc_visit': 'No PHC visit',
+      'followup_notes': 'Notes',
+      'followup_notes_hint': 'Context — transport, household, etc.',
+      'consent_share_deidentified':
+          'Share a de-identified copy for research',
+      'consent_share_deidentified_body':
+          'Age band, gender, conditions and outcome only — no name, ABHA ID or free text. You can withdraw in Settings.',
+      'save_outcome': 'Save outcome',
+      'outcome_saved': 'Outcome saved.',
+      'outcome_save_failed': 'Could not save outcome. Please try again.',
+      // Analytics (feature #3 companion)
+      'export_analytics': 'Export anonymized records',
+      'export_analytics_subtitle': 'Share the research JSONL file',
+      'export_analytics_empty':
+          'No records yet — consent is captured per follow-up.',
+
+      // ── Outbox (feature #4 — offline handoff queue) ──
+      'outbox_title': 'Outbox',
+      'outbox_empty': 'Outbox is empty',
+      'outbox_empty_body':
+          'Messages you send to the PHC while offline will appear here so you can resend when you have a signal.',
+      'outbox_empty_subtitle': 'No pending messages',
+      'outbox_pending': 'Pending',
+      'outbox_launched': 'Sent',
+      'outbox_pending_section': 'Waiting to send',
+      'outbox_launched_section': 'Sent earlier',
+      'outbox_pending_subtitle': 'waiting to send',
+      'outbox_online': 'Online — you can send now',
+      'outbox_offline': 'No signal — will stay queued',
+      'outbox_recipient': 'To',
+      'outbox_send_now': 'Send now',
+      'outbox_resend': 'Send again',
+      'outbox_kind_whatsapp': 'WhatsApp referral',
+      'outbox_kind_sms': 'SMS referral',
+      'outbox_kind_fhir': 'FHIR bundle',
+      'outbox_just_now': 'Just now',
+      'outbox_delete_title': 'Delete from Outbox?',
+      'outbox_delete_body':
+          'The draft will be removed. This does not affect the original assessment record.',
+      'outbox_retry_failed':
+          'Could not reopen the composer. Try again when a signal is available.',
+      'handoff_queued_to_outbox': 'No signal — saved to Outbox',
+      'handoff_failed': 'Could not open the composer',
+      'delete': 'Delete',
+      'view': 'View',
+
+      // ── Household view (feature #5 — household contagion) ──
+      'households': 'Households',
+      'households_subtitle': 'Family + contagion cluster view',
+      'households_alerts': 'contagion alerts',
+      'households_empty': 'No households yet',
+      'households_empty_body':
+          'Assessments with a household ID will group together here so you can spot shared infections.',
+      'household_view': 'Household',
+      'household_members': 'Members',
+      'household_contagion_alerts': 'Contagion alerts',
+      'household_no_members': 'No members yet',
+      'household_recent_visits': 'Recent visits',
+      'household_alert_shared_contagious':
+          'Shared contagious condition detected',
+      'household_alert_febrile_cluster':
+          'Febrile cluster — multiple members with fever',
+      'household_alert_enteric_cluster':
+          'Enteric cluster — multiple members with diarrhoea or vomiting',
+      'household_alert_respiratory_cluster':
+          'Respiratory cluster — multiple members with cough or breathlessness',
+      'household_action_tb':
+          'Screen all household contacts for TB; sputum test and treat exposed members.',
+      'household_action_vector':
+          'Check for standing water; use mosquito nets; test anyone febrile.',
+      'household_action_skin':
+          'Treat the entire household simultaneously; wash bedding and clothing.',
+      'household_action_enteric':
+          'Inspect water source; start ORS for affected members; test stool if worsening.',
+      'household_action_contagion':
+          'Isolate index case; screen and treat household contacts.',
+      'household_action_febrile':
+          'Consider dengue / typhoid / malaria screening. Monitor members for 48h.',
+      'household_action_respiratory':
+          'Screen for TB and COVID in all members; separate sleeping space if possible.',
+      'members': 'members',
+      'visits': 'visits',
+      'last_visit': 'Last visit',
+      'trigger': 'Trigger',
+
+      // ── Patient timeline (feature #6 — longitudinal view) ──
+      'patient_timeline': 'Patient timeline',
+      'timeline_empty': 'No visits yet',
+      'timeline_approx_match_warning':
+          'Matched by name + age — results may be split across typos.',
+      'timeline_vitals_trend': 'Vitals trend',
+      'timeline_chart_need_more_visits':
+          'At least two visits are needed to plot a trend.',
+      'timeline_chart_no_data': 'No data for this vital yet',
+      'temperature_short': 'Temp (°F)',
+      'bp_short': 'BP (sys)',
+      'heart_rate_short': 'HR',
+      'spo2_short': 'SpO₂',
+
+      // History screen toggles
+      'history_group_by_tooltip': 'Group',
+      'history_group_by_date': 'By date',
+      'history_group_by_patient': 'By patient',
+
+      // PDF export (features A2 + A3)
+      'household_share_summary': 'Share family summary',
+      'timeline_export': 'Export timeline',
+      'pdf_export_failed': 'Could not generate PDF',
+
+      // Local notifications (feature A1-full)
+      'notif_channel_outbox': 'Outbox reminders',
+      'notif_outbox_ready_title': 'Signal restored',
+      'notif_outbox_ready_body':
+          'You have messages waiting to send. Tap to open the Outbox.',
+      'notif_permission_rationale':
+          'Rural Health AI uses notifications only to tell you when signal returns so you can send queued PHC handoffs. No marketing, ever.',
 },
 
     // ─── HINDI ────────────────────────────────────────────────

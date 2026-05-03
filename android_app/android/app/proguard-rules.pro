@@ -86,3 +86,24 @@
 # Android speech recognizer intent wiring uses reflection on the Intent
 # extras bag; keep the plugin surface.
 -keep class com.csdcorp.speech_to_text.** { *; }
+
+# ── flutter_local_notifications ──
+# The plugin uses GSON to (de)serialize scheduled-notification payloads
+# via Java reflection on field names. Without -keep rules R8 strips the
+# no-arg constructors and obfuscates the field names, which manifests
+# at runtime as "no-arg constructor not found" / "no such field" errors
+# on device only (debug skips R8, so this bites in release).
+-keep class com.dexterous.flutterlocalnotifications.** { *; }
+-keep class com.dexterous.** { *; }
+-keepattributes *Annotation*
+-keepclassmembers class ** {
+  @com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver <methods>;
+}
+# GSON — used internally by flutter_local_notifications for payload serialization.
+-keep class com.google.gson.** { *; }
+-keep class * implements com.google.gson.TypeAdapterFactory { *; }
+-keep class * implements com.google.gson.JsonSerializer { *; }
+-keep class * implements com.google.gson.JsonDeserializer { *; }
+-keepclassmembers,allowobfuscation class * {
+  @com.google.gson.annotations.SerializedName <fields>;
+}

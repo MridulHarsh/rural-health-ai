@@ -55,6 +55,16 @@ jobs:
       - name: Analyze (errors + warnings fail the build; infos allowed per CLAUDE.md)
         run: flutter analyze --no-fatal-infos
 
+      # Run the pure-Dart unit tests on every push / PR. They don't need a
+      # device (sqflite_common_ffi in-memory DB + test-only encryption key),
+      # so the ~2s runtime is trivial but they catch regressions in
+      # ClinicalEngine scoring and the Outbox queue lifecycle that
+      # `flutter analyze` cannot. The existing widget_test.dart is excluded
+      # because it initializes MaterialApp, which pulls in platform channels
+      # that aren't available on a headless CI runner.
+      - name: Run unit tests
+        run: flutter test test/clinical_engine_test.dart test/handoff_queue_service_test.dart
+
       # Release signing — set up ONLY if the four signing secrets are
       # configured on the repo. When they're absent (e.g. fork builds, or
       # a fresh clone before secrets are added) we skip this step and the
@@ -85,23 +95,35 @@ jobs:
           keyPassword=$KEY_PASSWORD
           EOF
 
-      - name: Build release APK
-        run: flutter build apk --release
+      # split-per-abi produces three smaller APKs (armeabi-v7a, arm64-v8a,
+      # x86_64) instead of one universal ~130 MB binary. Target phones only
+      # need the one matching their CPU — the release workflow attaches all
+      # three to the GitHub Release so downloaders pick whichever fits.
+      - name: Build release APKs (split-per-abi)
+        run: flutter build apk --release --split-per-abi
 
-      - name: Verify APK produced
+      - name: Verify APKs produced
         run: |
-          apk=build/app/outputs/flutter-apk/app-release.apk
-          if [ ! -f "$apk" ]; then
-            echo "::error::APK not found at $apk — build step may have silently failed."
-            ls -R build/app/outputs/ || true
+          dir=build/app/outputs/flutter-apk
+          missing=0
+          for abi in armeabi-v7a arm64-v8a x86_64; do
+            apk="$dir/app-$abi-release.apk"
+            if [ ! -f "$apk" ]; then
+              echo "::error::Missing APK: $apk"
+              missing=1
+            else
+              echo "  $apk ($(du -h "$apk" | cut -f1))"
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            ls -R "$dir" || true
             exit 1
           fi
-          echo "APK size: $(du -h "$apk" | cut -f1)"
 
-      - name: Upload APK
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: rural-health-ai-${{ github.sha }}
-          path: android_app/build/app/outputs/flutter-apk/app-release.apk
+          path: android_app/build/app/outputs/flutter-apk/app-*-release.apk
           if-no-files-found: error
           retention-days: 30

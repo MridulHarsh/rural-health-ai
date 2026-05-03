@@ -91,4 +91,9 @@
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 13+ (API 33). Used ONLY by NotificationService to show a
+         local reminder when connectivity returns and the Outbox has pending
+         handoffs — no push provider, no FCM token. The user can opt out
+         from system settings without losing any other app function. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

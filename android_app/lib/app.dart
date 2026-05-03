@@ -11,8 +11,20 @@ import 'screens/settings_screen.dart';
 import 'screens/inventory_screen.dart';
 import 'screens/mch_screen.dart';
 import 'screens/dosage_screen.dart';
+import 'dart:async';
+
+import 'screens/households_list_screen.dart';
+import 'screens/outbox_screen.dart';
+import 'services/connectivity_service.dart';
 import 'services/encryption_service.dart';
+import 'services/handoff_queue_service.dart';
 import 'services/ml_service.dart';
+import 'services/notification_service.dart';
+
+/// Global navigator key — lets [NotificationService]'s tap handler push
+/// the `/outbox` route without needing a BuildContext from inside the
+/// background isolate that delivers the tap.
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 class RuralHealthApp extends StatefulWidget {
   const RuralHealthApp({super.key});
@@ -30,6 +42,7 @@ class _RuralHealthAppState extends State<RuralHealthApp> {
   Locale _locale = const Locale('en');
   final MLService _mlService = MLService();
   bool _isLoading = true;
+  StreamSubscription<bool>? _connSub;
 
   @override
   void initState() {
@@ -50,6 +63,50 @@ class _RuralHealthAppState extends State<RuralHealthApp> {
       debugPrint('EncryptionService init failed (PII will be plaintext): $e');
     }
 
+    // Start transport listener so the Outbox can make offline/online
+    // decisions without each screen polling separately.
+    try {
+      await ConnectivityService.start();
+    } catch (e) {
+      // Log only the type — the exception message may contain platform
+      // channel paths or plugin internals we don't want in adb logcat.
+      debugPrint(
+          '[App] ConnectivityService start failed: ${e.runtimeType}');
+    }
+
+    // Wire local notifications: on offline→online transitions, tell the
+    // ASHA that queued messages are ready to send. Permission prompt is
+    // only shown on Android 13+. Channel name/description are routed
+    // through [AppTranslations] so the name the user sees in system
+    // settings matches the app's current language at first launch.
+    // (Android caches channel name at creation time — locale changes
+    // after that won't re-localize the cached entry.)
+    try {
+      await NotificationService.initialize(
+        onOpenOutbox: _openOutbox,
+        channelName: AppTranslations.t('notif_channel_outbox', langCode),
+        channelDescription:
+            AppTranslations.t('notif_permission_rationale', langCode),
+      );
+      await NotificationService.requestPermission();
+      _connSub = ConnectivityService.onChange.listen(_onConnectivityChange);
+
+      // If the app was launched by tapping an Outbox notification (cold
+      // start), route to /outbox once the navigator is up. The plugin's
+      // `onDidReceiveNotificationResponse` callback fires before
+      // `navigatorKey.currentState` exists on cold start, so we check the
+      // pending-launch flag that NotificationService captured and schedule
+      // our own post-frame pushNamed.
+      if (NotificationService.launchedFromNotificationTap) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          navigatorKey.currentState?.pushNamed('/outbox');
+        });
+      }
+    } catch (e) {
+      debugPrint(
+          '[App] NotificationService init failed: ${e.runtimeType}');
+    }
+
     // Pre-load ML model
     try {
       await _mlService.initialize();
@@ -61,6 +118,33 @@ class _RuralHealthAppState extends State<RuralHealthApp> {
     setState(() => _isLoading = false);
   }
 
+  /// Fired from [ConnectivityService]. [online] is the new state. We only
+  /// act on offline→online transitions (the stream already de-duplicates).
+  Future<void> _onConnectivityChange(bool online) async {
+    if (!online) return;
+    try {
+      final pending = await HandoffQueueService.pendingCount();
+      if (pending <= 0) return;
+      await NotificationService.showOutboxPending(
+        pendingCount: pending,
+        title: AppTranslations.t(
+            'notif_outbox_ready_title', _locale.languageCode),
+        body: AppTranslations.t(
+            'notif_outbox_ready_body', _locale.languageCode),
+      );
+    } catch (e) {
+      debugPrint(
+          '[App] outbox-pending notification error: ${e.runtimeType}');
+    }
+  }
+
+  /// Tap-from-notification handler. Uses [navigatorKey] because the plugin
+  /// delivers taps outside the widget tree (on cold start it can fire
+  /// before `build` runs).
+  void _openOutbox() {
+    navigatorKey.currentState?.pushNamed('/outbox');
+  }
+
   void setLocale(Locale locale) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('language', locale.languageCode);
@@ -70,6 +154,7 @@ class _RuralHealthAppState extends State<RuralHealthApp> {
 
   @override
   void dispose() {
+    _connSub?.cancel();
     _mlService.dispose();
     super.dispose();
   }
@@ -86,6 +171,7 @@ class _RuralHealthAppState extends State<RuralHealthApp> {
 
     return MaterialApp(
       title: 'Rural Health AI',
+      navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
       locale: _locale,
       supportedLocales: AppTranslations.supportedLocales,
@@ -192,6 +278,8 @@ class _RuralHealthAppState extends State<RuralHealthApp> {
         '/inventory': (context) => const InventoryScreen(),
         '/mch': (context) => const MchScreen(),
         '/dosage': (context) => const DosageScreen(),
+        '/outbox': (context) => const OutboxScreen(),
+        '/households': (context) => const HouseholdsListScreen(),
       },
     );
   }

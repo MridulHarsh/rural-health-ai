@@ -5,7 +5,20 @@
 
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../models/handoff_queue_item.dart';
+import 'connectivity_service.dart';
+import 'handoff_queue_service.dart';
+
+/// Outcome of a send-or-queue attempt. `launched` means the system composer
+/// opened (WhatsApp / SMS / share sheet); `queued` means we saved the intent
+/// to the Outbox because the device reported offline. `failed` is reserved
+/// for hard errors (launch exception) — note that user-cancellation from
+/// the share sheet counts as `launched`, not `failed`.
+enum HandoffResult { launched, queued, failed }
 
 class HandoffService {
   /// Short-code emergency numbers that must ALWAYS be dialable, regardless
@@ -79,7 +92,7 @@ class HandoffService {
   /// Attempt to launch [url] with [LaunchMode.externalApplication]. By
   /// default we skip the [canLaunchUrl] precheck — on Android 11+ it
   /// returns false for any package not declared in the manifest's
-  /// <queries> block even when the app is installed, and the actual
+  /// `<queries>` block even when the app is installed, and the actual
   /// launch often succeeds anyway. We only mark a launch failed when
   /// [launchUrl] itself throws or returns false.
   static Future<bool> _tryLaunch(String url, {bool checkCanLaunch = false}) async {
@@ -103,4 +116,289 @@ class HandoffService {
 
   /// Default emergency number for India. Override per deployment region.
   static const String defaultEmergencyNumber = '108';
+
+  /// Write the FHIR bundle JSON to a short-lived file in the app cache dir
+  /// and hand it off via the platform share sheet. The ASHA can then pick
+  /// WhatsApp / Gmail / Drive / Bluetooth — whatever the PHC physician uses.
+  ///
+  /// The file is written to the app's *cache* directory (not documents)
+  /// because it's a share-in-flight artefact, not durable state. Android
+  /// reclaims cache aggressively under storage pressure, which is the
+  /// right behavior: if the share didn't happen, the patient data doesn't
+  /// linger on disk.
+  ///
+  /// The filename is `fhir_<hash-prefix>_<timestamp>.json` — the hash
+  /// prefix makes dedup obvious to a receiver who gets two copies, and the
+  /// timestamp prevents collisions when the same bundle is re-shared.
+  ///
+  /// Returns true on a clean share-sheet return, false on any launch
+  /// error. `share_plus` swallows user-cancellation as a success — that's
+  /// correct: the ASHA chose not to send, which isn't a failure.
+  static Future<bool> shareFhirBundle({
+    required String bundleJson,
+    required String bundleHash,
+    String? subject,
+    String? messageBody,
+  }) async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final hashPrefix = bundleHash.length >= 8
+          ? bundleHash.substring(0, 8)
+          : bundleHash;
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final file = File('${dir.path}/fhir_${hashPrefix}_$ts.json');
+      await file.writeAsString(bundleJson, flush: true);
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path, mimeType: 'application/fhir+json')],
+          subject: subject ?? 'Clinical Assessment Summary (FHIR Bundle)',
+          text: messageBody,
+        ),
+      );
+      return true;
+    } catch (e) {
+      // Never log the bundle — it contains patient name + conditions.
+      debugPrint('[HandoffService] FHIR share error: ${e.runtimeType}');
+      return false;
+    }
+  }
+
+  /// Share the de-identified analytics JSONL via the platform share sheet.
+  /// Used from Settings → "Export my anonymized contributions" so the ASHA
+  /// can send the rolling record to the NeuCure research inbox manually
+  /// (explicit, visible, user-initiated — no silent network upload).
+  static Future<bool> shareAnalyticsFile({
+    required String filePath,
+    String? messageBody,
+  }) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) return false;
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(filePath, mimeType: 'application/x-ndjson')],
+          subject: 'De-identified outcome records',
+          text: messageBody,
+        ),
+      );
+      return true;
+    } catch (e) {
+      debugPrint(
+          '[HandoffService] analytics share error: ${e.runtimeType}');
+      return false;
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // Outbox-aware wrappers
+  //
+  // Every send-or-queue call creates a row in `handoff_queue` so the ASHA
+  // has a durable record of the intent regardless of outcome. Online path:
+  // the row is marked launched right after the composer opens. Offline path:
+  // the row stays [HandoffStatus.pending] until the user reopens it from
+  // the Outbox screen.
+  // ──────────────────────────────────────────────────────────────
+
+  /// Online → launch WhatsApp composer + stash a `launched` audit row.
+  /// Offline → save only a `pending` row, no launch attempt (WhatsApp will
+  /// report "no internet" if we open it dry, which confuses the ASHA more
+  /// than a clear "saved to Outbox" message).
+  static Future<HandoffResult> sendWhatsAppOrQueue({
+    required String message,
+    String? phone,
+    String? label,
+  }) async {
+    final online = await ConnectivityService.refresh();
+    if (!online) {
+      await HandoffQueueService.enqueue(
+        kind: HandoffKind.whatsapp,
+        payload: message,
+        recipient: phone,
+        label: label,
+      );
+      return HandoffResult.queued;
+    }
+    final id = await HandoffQueueService.enqueue(
+      kind: HandoffKind.whatsapp,
+      payload: message,
+      recipient: phone,
+      label: label,
+    );
+    final ok = await sendToWhatsApp(message: message, phone: phone);
+    if (ok) {
+      await HandoffQueueService.markLaunched(id);
+      return HandoffResult.launched;
+    }
+    // Launch failed (e.g. WhatsApp not installed). Drop the audit row —
+    // otherwise the home-screen "pending" badge reports a phantom the ASHA
+    // never chose to queue. The returned `failed` result surfaces as a
+    // snackbar so the user still knows the send didn't go through.
+    await HandoffQueueService.delete(id);
+    return HandoffResult.failed;
+  }
+
+  /// Online → launch SMS composer pre-filled + stash a `launched` audit row.
+  /// Offline → save only a `pending` row. SMS at the platform level does
+  /// queue when no signal, so offline-launch would actually work — but we
+  /// still defer because the ASHA might want to edit or re-target before
+  /// signal returns, and launching blindly burns the draft.
+  static Future<HandoffResult> draftSmsOrQueue({
+    required String message,
+    String? phone,
+    String? label,
+  }) async {
+    final online = await ConnectivityService.refresh();
+    if (!online) {
+      await HandoffQueueService.enqueue(
+        kind: HandoffKind.sms,
+        payload: message,
+        recipient: phone,
+        label: label,
+      );
+      return HandoffResult.queued;
+    }
+    final id = await HandoffQueueService.enqueue(
+      kind: HandoffKind.sms,
+      payload: message,
+      recipient: phone,
+      label: label,
+    );
+    final ok = await draftSms(message: message, phone: phone);
+    if (ok) {
+      await HandoffQueueService.markLaunched(id);
+      return HandoffResult.launched;
+    }
+    await HandoffQueueService.delete(id);
+    return HandoffResult.failed;
+  }
+
+  /// Online → write bundle + launch share sheet + stash a `launched` audit
+  /// row.
+  /// Offline → pin the bundle to app documents dir (not cache) and save a
+  /// `pending` row; the Outbox can re-launch later without rebuilding the
+  /// bundle.
+  static Future<HandoffResult> shareFhirOrQueue({
+    required String bundleJson,
+    required String bundleHash,
+    String? subject,
+    String? messageBody,
+    String? label,
+  }) async {
+    final online = await ConnectivityService.refresh();
+    if (!online) {
+      final persistedPath = await HandoffQueueService.persistFhirBundle(
+        bundleJson: bundleJson,
+        bundleHash: bundleHash,
+      );
+      await HandoffQueueService.enqueue(
+        kind: HandoffKind.fhirShare,
+        payload: messageBody ?? '',
+        filePath: persistedPath,
+        fileHash: bundleHash,
+        label: label,
+      );
+      return HandoffResult.queued;
+    }
+    // Pin the bundle even on the online path so the Outbox can re-share it
+    // later without rebuilding. File cleanup happens via
+    // [HandoffQueueService.delete] when the user dismisses the queue item.
+    final persistedPath = await HandoffQueueService.persistFhirBundle(
+      bundleJson: bundleJson,
+      bundleHash: bundleHash,
+    );
+    final id = await HandoffQueueService.enqueue(
+      kind: HandoffKind.fhirShare,
+      payload: messageBody ?? '',
+      filePath: persistedPath,
+      fileHash: bundleHash,
+      label: label,
+    );
+    // The persisted file is AES-GCM encrypted; decrypt to a short-lived
+    // temp file before feeding the path to the share sheet, then delete
+    // the decrypted copy once the share completes.
+    final decrypted =
+        await HandoffQueueService.decryptBundleToTemp(persistedPath);
+    if (decrypted == null) {
+      await HandoffQueueService.delete(id);
+      return HandoffResult.failed;
+    }
+    try {
+      final ok = await _shareFileWithShareSheet(
+        filePath: decrypted.path,
+        mimeType: 'application/fhir+json',
+        subject: subject ?? 'Clinical Assessment Summary (FHIR Bundle)',
+        text: messageBody,
+      );
+      if (ok) {
+        await HandoffQueueService.markLaunched(id);
+        return HandoffResult.launched;
+      }
+      await HandoffQueueService.delete(id);
+      return HandoffResult.failed;
+    } finally {
+      try {
+        if (await decrypted.exists()) await decrypted.delete();
+      } catch (_) {/* best-effort cleanup */}
+    }
+  }
+
+  /// Re-launch a queued item from the Outbox screen. Returns true on a
+  /// successful composer launch; the caller marks the item as launched.
+  /// For fhirShare items, the backing file must still exist on disk.
+  static Future<bool> retryQueueItem(HandoffQueueItem item) async {
+    switch (item.kind) {
+      case HandoffKind.whatsapp:
+        return sendToWhatsApp(
+          message: item.payload,
+          phone: item.recipient,
+        );
+      case HandoffKind.sms:
+        return draftSms(message: item.payload, phone: item.recipient);
+      case HandoffKind.fhirShare:
+        if (item.filePath == null) return false;
+        // The persisted bundle is encrypted at rest (see
+        // [HandoffQueueService.persistFhirBundle]). Decrypt to a short-lived
+        // temp file before handing the path to the share sheet; delete the
+        // decrypted copy after the share sheet returns so plaintext doesn't
+        // linger past the handoff.
+        final decrypted =
+            await HandoffQueueService.decryptBundleToTemp(item.filePath!);
+        if (decrypted == null) return false;
+        try {
+          return await _shareFileWithShareSheet(
+            filePath: decrypted.path,
+            mimeType: 'application/fhir+json',
+            subject: 'Clinical Assessment Summary (FHIR Bundle)',
+            text: item.payload.isEmpty ? null : item.payload,
+          );
+        } finally {
+          try {
+            if (await decrypted.exists()) await decrypted.delete();
+          } catch (_) {/* best-effort cleanup */}
+        }
+    }
+  }
+
+  /// Internal helper to avoid re-writing the share_plus boilerplate in both
+  /// [shareFhirBundle] and [shareFhirOrQueue] / [retryQueueItem].
+  static Future<bool> _shareFileWithShareSheet({
+    required String filePath,
+    required String mimeType,
+    String? subject,
+    String? text,
+  }) async {
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(filePath, mimeType: mimeType)],
+          subject: subject,
+          text: text,
+        ),
+      );
+      return true;
+    } catch (e) {
+      debugPrint('[HandoffService] share error: ${e.runtimeType}');
+      return false;
+    }
+  }
 }

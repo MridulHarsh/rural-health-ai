@@ -40,6 +40,16 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
   final _nameController = TextEditingController();
   final _ageController = TextEditingController();
   final _householdController = TextEditingController();
+  // ABHA (Ayushman Bharat Health Account) — optional. When present, the
+  // values flow through the FHIR Patient.identifier on export. The ID is
+  // a 14-digit number; the address is `username@hiu`.
+  final _abhaIdController = TextEditingController();
+  final _abhaAddressController = TextEditingController();
+  // Live validation error for the ABHA ID field. Null when empty or
+  // exactly 14 digits; otherwise `abha_id_invalid`. Invalid values are
+  // silently dropped from the Patient so they never reach FHIR export.
+  String? _abhaIdError;
+  static final _abhaIdDigits = RegExp(r'^\d{14}$');
   String _gender = 'Male';
 
   // Vitals
@@ -387,6 +397,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
     // Convert conditions
     final conditions = diagnosis.conditions.map((c) {
       return PredictedCondition(
+        canonicalId: c.profile.id,
         name: c.profile.displayName,
         confidence: c.confidence,
         riskLevel: mapRisk(c.risk),
@@ -408,6 +419,7 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
           ...diagnosis.redFlag!.matchedRequired,
           ...diagnosis.redFlag!.matchedSupporting,
         ],
+        ruleId: diagnosis.redFlag!.rule.id,
       );
     }
 
@@ -434,6 +446,17 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
         householdId: _householdController.text.trim().isEmpty
             ? null
             : _householdController.text.trim(),
+        // ABHA IDs are ABDM-validated (14 digits) at the receiver; a
+        // malformed value would cause the downstream HIU to silently
+        // reject the Patient resource. Drop non-conforming input rather
+        // than ship a broken identifier — the errorText in the field has
+        // already told the user the format is wrong.
+        abhaId: _abhaIdDigits.hasMatch(_abhaIdController.text.trim())
+            ? _abhaIdController.text.trim()
+            : null,
+        abhaAddress: _abhaAddressController.text.trim().isEmpty
+            ? null
+            : _abhaAddressController.text.trim(),
       ),
       vitals: vitals,
       symptoms: allSymptoms.toList(),
@@ -896,6 +919,40 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
               helperText:
                   'Same ID for family members → cluster view for contagion',
               prefixIcon: const Icon(Icons.home_outlined),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+          const SizedBox(height: 20),
+          TextField(
+            controller: _abhaIdController,
+            keyboardType: TextInputType.number,
+            onChanged: (value) {
+              final trimmed = value.trim();
+              final err = trimmed.isEmpty || _abhaIdDigits.hasMatch(trimmed)
+                  ? null
+                  : _t('abha_id_invalid');
+              if (err != _abhaIdError) {
+                setState(() => _abhaIdError = err);
+              }
+            },
+            decoration: InputDecoration(
+              labelText: _t('abha_id'),
+              helperText: _t('abha_id_hint'),
+              errorText: _abhaIdError,
+              prefixIcon: const Icon(Icons.badge_outlined),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _abhaAddressController,
+            keyboardType: TextInputType.emailAddress,
+            decoration: InputDecoration(
+              labelText: _t('abha_address'),
+              helperText: _t('abha_address_hint'),
+              prefixIcon: const Icon(Icons.alternate_email),
               border:
                   OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             ),
@@ -1619,6 +1676,8 @@ class _AssessmentScreenState extends State<AssessmentScreen> {
     _nameController.dispose();
     _ageController.dispose();
     _householdController.dispose();
+    _abhaIdController.dispose();
+    _abhaAddressController.dispose();
     _tempController.dispose();
     _bpController.dispose();
     _hrController.dispose();

@@ -21,14 +21,14 @@ dependencies:
 
   # Camera / Image
   image_picker: ^1.0.7
-  camera: ^0.10.5+9
+  camera: ^0.12.0+1
 
   # UI Components
   cupertino_icons: ^1.0.6
-  google_fonts: ^6.1.0
+  google_fonts: ^8.0.2
   flutter_animate: ^4.5.0
   shimmer: ^3.0.0
-  fl_chart: ^0.66.0
+  fl_chart: ^1.2.0
   percent_indicator: ^4.2.3
 
   # Storage
@@ -42,22 +42,27 @@ dependencies:
   printing: ^5.12.0
 
   # Utilities
-  intl: ^0.20.2
-  permission_handler: ^11.3.0
+  intl: ^0.20.2                                # Pinned at 0.20 by Flutter 3.41.6; bumping requires a Flutter SDK bump too
+  permission_handler: ^12.0.1
   uuid: ^4.3.3
+  crypto: ^3.0.3                               # SHA-256 for FHIR encounter-hash provenance
 
   # ── New: competitive-parity features ──
   url_launcher: ^6.3.0                         # WhatsApp / SMS / tel intents for PHC handoff
-  vibration: ^2.0.0                            # Emergency alarm on red-flag trigger
+  share_plus: ^12.0.2                          # System share sheet for FHIR bundle + analytics JSONL attachments (13.x blocked by Flutter 3.41.6)
+  vibration: ^3.1.8                            # Emergency alarm on red-flag trigger
   encrypt: ^5.0.3                              # AES-256 at-rest encryption for PII
-  flutter_secure_storage: ^9.2.2               # Key storage for encrypt
-  google_mlkit_text_recognition: ^0.13.0       # OCR for prescription photos
-  geolocator: ^12.0.0                          # Optional GPS stamp for outbreak clustering
+  flutter_secure_storage: ^10.0.0              # Key storage for encrypt
+  google_mlkit_text_recognition: ^0.15.1       # OCR for prescription photos
+  geolocator: ^14.0.2                          # Optional GPS stamp for outbreak clustering
+  connectivity_plus: ^7.1.1                    # Online/offline detection for the Outbox queue (feature #4)
+  flutter_local_notifications: ^21.0.0         # Local notification when signal returns + Outbox has pending (feature A1-full)
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.1
+  flutter_lints: ^5.0.0
+  sqflite_common_ffi: ^2.3.0   # In-memory SQLite for unit tests (no device needed)
 
 flutter:
   uses-material-design: true

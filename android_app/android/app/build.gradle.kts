@@ -28,6 +28,12 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // `flutter_local_notifications` 17.x uses `java.time` APIs added in
+        // Java 8 which aren't natively available on Android API < 26. Core
+        // library desugaring backfills those classes so the notification
+        // plugin can schedule / format timestamps on every supported device
+        // (our minSdk is 23 via Flutter defaults).
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -86,4 +92,13 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // Required by `flutter_local_notifications` — backfills java.time APIs
+    // on Android API levels that don't ship them natively. See the
+    // compileOptions block above for the feature flag.
+    // flutter_local_notifications 21.x bumped the minimum; 2.1.4 is the
+    // floor the AAR metadata enforces.
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

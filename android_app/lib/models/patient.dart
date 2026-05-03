@@ -11,6 +11,14 @@ class Patient {
   /// Household identifier — groups family members for cluster/contagion view.
   /// A free-form string (e.g., village + head-of-household name + phone suffix).
   final String? householdId;
+  /// 14-digit ABHA ID (Ayushman Bharat Health Account). Optional — many rural
+  /// patients don't have one. When present, it's embedded as the Patient
+  /// resource identifier in the FHIR bundle exported to ABDM-compliant
+  /// endpoints.
+  final String? abhaId;
+  /// ABHA Address (format: username@hiu). Human-readable alternative to the
+  /// numeric ABHA ID. Either one is enough for ABDM handoff.
+  final String? abhaAddress;
 
   Patient({
     required this.id,
@@ -19,6 +27,8 @@ class Patient {
     required this.gender,
     DateTime? createdAt,
     this.householdId,
+    this.abhaId,
+    this.abhaAddress,
   }) : createdAt = createdAt ?? DateTime.now();
 
   Map<String, dynamic> toJson() => {
@@ -28,6 +38,8 @@ class Patient {
         'gender': gender,
         'createdAt': createdAt.toIso8601String(),
         'householdId': householdId,
+        'abhaId': abhaId,
+        'abhaAddress': abhaAddress,
       };
 
   factory Patient.fromJson(Map<String, dynamic> json) => Patient(
@@ -37,6 +49,8 @@ class Patient {
         gender: json['gender'],
         createdAt: DateTime.parse(json['createdAt']),
         householdId: json['householdId'] as String?,
+        abhaId: json['abhaId'] as String?,
+        abhaAddress: json['abhaAddress'] as String?,
       );
 }
 
@@ -66,7 +80,7 @@ class Vitals {
     this.height,
   });
 
-  /// Convert vitals to the Map<String, double> format the clinical engine expects.
+  /// Convert vitals to the `Map<String, double>` format the clinical engine expects.
   Map<String, double> toEngineMap() {
     final map = <String, double>{};
     if (temperature != null) map['temperature'] = temperature!;
@@ -106,6 +120,10 @@ class Vitals {
 
 /// A predicted condition with confidence and clinical reasoning.
 class PredictedCondition {
+  /// Canonical DiseaseProfile ID (e.g. `dengue`, `copd`). Required for
+  /// FHIR Condition resource coding and for de-identified analytics export —
+  /// the display name is localized/humanized and unsuitable for either.
+  final String canonicalId;
   final String name;
   final double confidence;
   final RiskLevel riskLevel;
@@ -116,6 +134,7 @@ class PredictedCondition {
   final List<String> nextSteps;
 
   PredictedCondition({
+    required this.canonicalId,
     required this.name,
     required this.confidence,
     required this.riskLevel,
@@ -127,6 +146,7 @@ class PredictedCondition {
   });
 
   Map<String, dynamic> toJson() => {
+        'canonicalId': canonicalId,
         'name': name,
         'confidence': confidence,
         'riskLevel': riskLevel.name,
@@ -144,16 +164,24 @@ class RedFlagAlert {
   final String immediateAction;
   final List<String> triggerSymptoms;
 
+  /// Canonical rule ID (e.g. `rf_sepsis`, `rf_severe_malaria`) — stable
+  /// across locales and releases. `conditionName` is the English display
+  /// label; `ruleId` is the key the analytics exporter uses so downstream
+  /// aggregation doesn't depend on English string stability.
+  final String? ruleId;
+
   RedFlagAlert({
     required this.conditionName,
     required this.immediateAction,
     required this.triggerSymptoms,
+    this.ruleId,
   });
 
   Map<String, dynamic> toJson() => {
         'conditionName': conditionName,
         'immediateAction': immediateAction,
         'triggerSymptoms': triggerSymptoms,
+        if (ruleId != null) 'ruleId': ruleId,
       };
 }
 

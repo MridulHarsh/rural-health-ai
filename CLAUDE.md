@@ -153,7 +153,7 @@ Global prevalence numbers (US CDC, WHO global averages) routinely undersell cond
 | `ml_service.dart` | Orchestrates ClinicalEngine + tabular ML + image classification. Class is `MLService` (uppercase). The 754-class general classifier maps to 99 DiseaseProfile IDs directly + 33 via `_mlClassToProfileAlias` (dengue↔dengue_fever, copd↔…, hiv↔…, etc.) for a total ML→profile overlap of ~132/162. Raw ML input flows through `List<List<double>>` to `Interpreter.run()`; **never** `.buffer.asFloat32List()` on a Float64List — that byte-reinterprets doubles into 2× garbage floats. |
 | `specialist_models.dart` | Singleton loading 6 tabular TFLite models. `buildFromVitals()` maps captured vitals into each model's feature space. Derived fields: `hypertension` (1 if systolic≥140 OR diastolic≥90), `heart_disease` (default 0 = no known history, overridable via param), `bp` = systolic (kidney feature alias). Risk scoring is **label-aware** (see note below). `SpecialistScreening.featureCoverage` (0.0–1.0) reports real-vs-zero-filled feature ratio; results screen hides <0.4, shows "Partial data X%" amber chip at 0.4–0.7. Feature key matching uses `_canonicalKey` = `toLowerCase().trim().replaceAll(RegExp(r'\s+'), '_')` — **all whitespace including NBSP (U+00A0)**, not just ASCII space (three liver features had an invisible NBSP prefix and were silently unreachable). |
 | `fuzzy_symptom_matcher.dart` | Voice-input matcher: substring + Levenshtein, max edit distance **2** (tightened from 3), min token length **5 for Latin / 3 for Indic**. Flattens alias chains at lookup-table build time. |
-| `database_service.dart` | SQLite (schema v2). PII columns (`patient_name`, `voice_transcript`, `notes`) are AES-GCM encrypted via `EncryptionService`. `household_id` groups family members for contagion view. **All PII reads go through `_safeDecrypt`** (try/catch wrapper) — a single corrupt envelope must not crash the entire history retrieval; same resilience pattern as `_safeDecode` for JSON columns. |
+| `database_service.dart` | SQLite (schema v3). PII columns (`patient_name`, `voice_transcript`, `notes`, `abha_id`, `abha_address`) are AES-GCM encrypted via `EncryptionService`. `household_id` groups family members for contagion view. Schema v3 also adds the `followup_outcomes` table (outcome tracking, feature #3). **All PII reads go through `_safeDecrypt`** (try/catch wrapper) — a single corrupt envelope must not crash the entire history retrieval; same resilience pattern as `_safeDecode` for JSON columns. |
 | `encryption_service.dart` | AES-256-GCM. Key stored in `flutter_secure_storage` (Android Keystore / iOS Keychain). `encryptString` / `decryptString` produce/consume `iv_b64|ct_b64` envelopes |
 | `handoff_service.dart` | WhatsApp (native scheme then wa.me fallback), SMS draft, tel dialer. **Do NOT use `canLaunchUrl` pre-check** — Android 11+ returns false for undeclared packages even when installed. `_sanitizePhone` rejects garbage input outside 7–15 digits, but `_emergencyShortCodes` (100/101/102/104/108/112/1098) bypass the length minimum — never remove that allowlist or `dial('108')` silently returns false. |
 | `emergency_service.dart` | Vibration-pattern alarm on red-flag triage |
@@ -162,6 +162,9 @@ Global prevalence numbers (US CDC, WHO global averages) routinely undersell cond
 | `inventory_service.dart` | ASHA medicine-kit SQLite table, seeded with WHO essential list on first launch |
 | `mch_service.dart` | Maternal & Child Health: Naegele EDD, 4-visit ANC schedule, full UIP immunization schedule |
 | `pdf_service.dart` | Patient-summary PDF via `pdf` + `printing`. Class `PdfExportService`, method `printSummary` |
+| `fhir_service.dart` | Builds FHIR R4 Bundle (Composition + Patient w/ ABHA identifier + LOINC Observations + Condition + ClinicalImpression) from an `AssessmentResult`. Deterministic v5 UUIDs seeded off `patient.id`; SHA-256 of canonical JSON is the provenance hash. No FHIR SDK dependency — handwritten builder keeps APK lean. |
+| `outcome_service.dart` | CRUD for `followup_outcomes`. PII columns encrypted via `EncryptionService`; enums/flags plaintext. `isFollowupDue()` drives the amber history badge (7-day ASHA cadence). |
+| `analytics_exporter.dart` | Append-only JSONL of de-identified (assessment, outcome) pairs to app Documents. Gated by per-encounter `FollowupOutcome.consentToShare`. Never emits name / ABHA / free text / raw vital values — only age bucket, ISO-week, canonical condition IDs, adherence/outcome enums, and a truncated encounter hash. Bumps `schemaVersion` for non-additive shape changes. |
 
 ### Bundled ML models (`android_app/assets/models/`)
 
@@ -278,6 +281,8 @@ Translations use community-spoken vocabulary, not Sanskritic/academic medical te
 4. **Disease profiles must use canonical ssm keys** (no alias names). The engine matches against the raw key in the profile, not through the alias map.
 5. **Complete corrected files preferred over partial edits** when refactoring.
 6. **TFLite tensor shapes are not compile-time checked** — mismatched input shapes throw at runtime only. Always cross-reference the model's `*_metadata.json` in `assets/models/` before changing any `classifyImage` / `_run` preprocessing.
+7. **`uuid` package is 4.x**: `Uuid.NAMESPACE_URL` is deprecated — use `Namespace.url.value` (from `package:uuid/uuid.dart`) for v5 namespace UUIDs.
+8. **The `flutter-analyze` PostToolUse hook treats warnings as blocking**, not just errors. Splitting "add import" and "first use" across two Edits fails on `unused_import` / `unused_field`. Either stage both into one Edit, or add the consumer first.
 
 ## Known-dead-end experiments (don't re-attempt without strong reason)
 
@@ -286,9 +291,15 @@ Translations use community-spoken vocabulary, not Sanskritic/academic medical te
 - **BLE mesh P2P sync, rPPG vitals from camera, cough-audio (YAMNet) classification** — all competitor features we chose to skip as out of scope. Don't add without explicit approval.
 - ~~**Skin image model** — 32% accuracy, permanently removed.~~ **RE-ADDED 2026-04-19** as a below-gate model (see bundled-models table). DermNet-23 retrained into 8 clinical supergroups via `model_training/kaggle_skin_model.py`. Still below the 70% ship gate — kept behind a `skinConfidenceFloor` guard in `ml_service.dart` that degrades low-confidence predictions to a PHC-referral sentinel. **Raise the floor or retrain before broadening UI surface area.**
 
-## Database schema (SQLite, version 2)
+## New deps (feature #1/#3, 2026-04-21)
 
-- `assessments` — primary table. Encrypted columns: `patient_name`, `voice_transcript`, `notes`. Plaintext: `patient_age`, `patient_gender`, `symptoms` (JSON), `vitals` (JSON), `conditions` (JSON), `overall_risk`, `next_steps` (JSON), `image_path`, `household_id`, `created_at`.
+- `crypto ^3.0.3` — SHA-256 for FHIR provenance and encounter-hash de-identification.
+- `share_plus ^10.0.0` — native share sheet for FHIR bundle and analytics JSONL attachments. Pure MethodChannel, no ProGuard rules needed.
+
+## Database schema (SQLite, version 3)
+
+- `assessments` — primary table. Encrypted columns: `patient_name`, `voice_transcript`, `notes`, `abha_id`, `abha_address`. Plaintext: `patient_age`, `patient_gender`, `symptoms` (JSON), `vitals` (JSON), `conditions` (JSON), `overall_risk`, `next_steps` (JSON), `image_path`, `household_id`, `created_at`.
+- `followup_outcomes` — opt-in outcome tracking (feature #3). Encrypted: `actual_diagnosis`, `treatment_given`, `notes`. Plaintext (so `AnalyticsExporter` can aggregate without the AES key): `adherence`, `outcome_status`, `consent_to_share`, `followup_date`, `created_at`. FK → `assessments.id` with `ON DELETE CASCADE`.
 - `inventory` — medicine kit, seeded from `_seed` const in `inventory_service.dart` on first launch.
 - `mch_records` — ANC + immunization schedules, with `completed` / `completed_on` columns.
 
